@@ -9,6 +9,8 @@ import io.github.rkaushikdev.kerfline.util.Guard;
 import io.github.rkaushikdev.kerfline.util.Num;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
 
 /**
  * ASME Section VIII Division 1, UW-51, for fully radiographed pressure welds.
@@ -43,6 +45,9 @@ public final class Asme8 {
     private static final double GAP_MULTIPLE = 6;
     private static final String ROUNDED_CLAUSE = "Appendix 4";
     private static final double ISOLATION_IN = 1;
+    private static final double THIN_IN = 0.125;
+    private static final int THIN_COUNT = 12;
+    private static final double COUNT_WINDOW_IN = 6;
 
     private Asme8() {}
 
@@ -132,7 +137,7 @@ public final class Asme8 {
      */
     public static double relevantOverIn(double thicknessIn) {
         Guard.requireAbove(thicknessIn, 0, "weld thickness");
-        if (thicknessIn < 0.125) {
+        if (thicknessIn < THIN_IN) {
             return Num.round(thicknessIn / 10, 4);
         }
         if (thicknessIn <= 0.25) {
@@ -225,10 +230,60 @@ public final class Asme8 {
     }
 
     /**
-     * Judge a whole joint: each indication on its own, then the aligned groups of the volumetric ones,
-     * then the rounded ones under Appendix 4.
+     * The count of rounded indications Appendix 4 allows on work under an eighth of an inch: twelve
+     * in any six inches of weld, and on a weld shorter than six inches proportionally fewer, rounded
+     * down. Thicker work is judged on the charts instead and has no count here.
      */
+    public static OptionalInt roundedCountLimit(double thicknessIn, OptionalDouble weldLengthIn) {
+        Guard.requireAbove(thicknessIn, 0, "weld thickness");
+        if (thicknessIn >= THIN_IN) {
+            return OptionalInt.empty();
+        }
+        if (weldLengthIn.isPresent() && weldLengthIn.getAsDouble() < COUNT_WINDOW_IN) {
+            double length = weldLengthIn.getAsDouble();
+            Guard.requireAbove(length, 0, "weld length");
+            return OptionalInt.of((int) Math.floor(Num.round(THIN_COUNT * length / COUNT_WINDOW_IN, 6)));
+        }
+        return OptionalInt.of(THIN_COUNT);
+    }
+
+    /**
+     * The thin work count, over the relevant rounded indications in the worst six inches. When none
+     * of them was located the whole set is counted as one run.
+     */
+    public static List<ClauseVerdict> judgeRoundedCount(
+            List<Indication> indications, double thicknessIn, OptionalDouble weldLengthIn) {
+        OptionalInt limit = roundedCountLimit(thicknessIn, weldLengthIn);
+        List<Indication> relevant = relevantRounded(indications, thicknessIn);
+        if (limit.isEmpty() || relevant.isEmpty()) {
+            return List.of();
+        }
+        double window =
+                Measure.worstWindow(relevant, COUNT_WINDOW_IN, indication -> 1).totalIn();
+        int count = (int) (window > 0 ? window : relevant.size());
+        if (count <= limit.getAsInt()) {
+            return List.of();
+        }
+        return List.of(Verdict.makeVerdict(
+                Disposition.REPAIR,
+                CODE,
+                ROUNDED_CLAUSE,
+                count + " rounded indications in " + Num.text(COUNT_WINDOW_IN) + " in of weld, " + limit.getAsInt()
+                        + " allowed on " + Num.text(thicknessIn) + " in",
+                count));
+    }
+
+    /** Judge a whole joint when the length of the seam was not given. */
     public static JointVerdict judgeJoint(List<Indication> indications, double thicknessIn) {
+        return judgeJoint(indications, thicknessIn, OptionalDouble.empty());
+    }
+
+    /**
+     * Judge a whole joint: each indication on its own, then the aligned groups of the volumetric ones,
+     * then the rounded ones under Appendix 4, sizes first and then, on thin work, how many.
+     */
+    public static JointVerdict judgeJoint(
+            List<Indication> indications, double thicknessIn, OptionalDouble weldLengthIn) {
         Guard.requireArray(indications, "indications");
         Guard.requireAbove(thicknessIn, 0, "weld thickness");
         List<ClauseVerdict> verdicts = new ArrayList<>();
@@ -238,6 +293,7 @@ public final class Asme8 {
         verdicts.addAll(judgeGroups(
                 indications.stream().filter(indication -> !indication.planar()).toList(), thicknessIn));
         verdicts.addAll(judgeRounded(indications, thicknessIn));
+        verdicts.addAll(judgeRoundedCount(indications, thicknessIn, weldLengthIn));
         return Common.settle(verdicts, CODE, CLAUSE);
     }
 }

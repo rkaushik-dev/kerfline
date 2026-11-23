@@ -108,6 +108,15 @@ class EngineTest {
         }
 
         @Test
+        void givesSectionViiiTheSeamLengthOnlyWhenItWasGiven() {
+            assertThat(((Asme8Context) Engine.contextFor("ASME8", JOINT)).weldLengthIn())
+                    .isEmpty();
+            Asme8Context given = (Asme8Context) Engine.contextFor("ASME8", JOINT, JudgeOptions.NONE.weldLengthIn(4));
+            assertThat(given.weldLengthIn()).hasValue(4);
+            assertThat(given.thicknessIn()).isCloseTo(0.28, digits(4));
+        }
+
+        @Test
         void givesSectionViiiTheWeldThickness() {
             assertThat(((Asme8Context) Engine.contextFor("ASME8", JOINT)).thicknessIn())
                     .isCloseTo(0.28, digits(4));

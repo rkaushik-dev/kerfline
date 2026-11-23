@@ -8,7 +8,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.rkaushikdev.kerfline.indication.Indication;
 import io.github.rkaushikdev.kerfline.util.Num;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.OptionalDouble;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -252,6 +254,77 @@ class Asme8Test {
             assertThat(result.disposition()).isEqualTo(Disposition.REPAIR);
             assertThat(result.reasons())
                     .containsExactly("porosity standing alone 0.2 in across, cap is 0.1667 in across");
+        }
+    }
+
+    @Nested
+    class RoundedCountOnThinWork {
+
+        private List<Indication> pores(int count, double step) {
+            List<Indication> set = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                set.add(at("POROSITY", 0.02, i * step));
+            }
+            return set;
+        }
+
+        @Test
+        void allowsTwelveInSixInchesOnlyUnderAnEighth() {
+            assertThat(Asme8.roundedCountLimit(0.1, OptionalDouble.empty())).hasValue(12);
+            assertThat(Asme8.roundedCountLimit(0.125, OptionalDouble.empty())).isEmpty();
+            assertThat(Asme8.roundedCountLimit(0.1, OptionalDouble.of(8))).hasValue(12);
+        }
+
+        @Test
+        void allowsProportionallyFewerOnAShortWeld() {
+            assertThat(Asme8.roundedCountLimit(0.1, OptionalDouble.of(4))).hasValue(8);
+            assertThat(Asme8.roundedCountLimit(0.1, OptionalDouble.of(3.2))).hasValue(6);
+            assertThatThrownBy(() -> Asme8.roundedCountLimit(0.1, OptionalDouble.of(0)))
+                    .hasMessageContaining("weld length");
+        }
+
+        @Test
+        void catchesAThirteenthPoreInSixInches() {
+            assertThat(Asme8.judgeRoundedCount(pores(12, 0.2), 0.1, OptionalDouble.empty()))
+                    .isEmpty();
+            assertThat(Asme8.judgeRoundedCount(pores(13, 0.2), 0.1, OptionalDouble.empty()))
+                    .singleElement()
+                    .satisfies(verdict -> {
+                        assertThat(verdict.reason())
+                                .hasValue("13 rounded indications in 6 in of weld, 12 allowed on 0.1 in");
+                        assertThat(verdict.clause()).isEqualTo("Appendix 4");
+                    });
+        }
+
+        @Test
+        void letsTheSamePoresThroughSpreadAlongTheSeam() {
+            assertThat(Asme8.judgeRoundedCount(pores(13, 1), 0.1, OptionalDouble.empty()))
+                    .isEmpty();
+        }
+
+        @Test
+        void holdsAShortSeamToItsShare() {
+            assertThat(Asme8.judgeRoundedCount(pores(9, 0.2), 0.1, OptionalDouble.of(4)))
+                    .hasSize(1);
+            JointVerdict result = Asme8.judgeJoint(pores(9, 0.2), 0.1, OptionalDouble.of(4));
+            assertThat(result.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(Asme8.judgeJoint(pores(9, 0.2), 0.1).disposition()).isEqualTo(Disposition.ACCEPT);
+        }
+
+        @Test
+        void countsUnplacedPoresAsOneRunAndIgnoresSpecks() {
+            List<Indication> unplaced = new ArrayList<>();
+            for (int i = 0; i < 13; i++) {
+                unplaced.add(ind("POROSITY", 0.02));
+            }
+            assertThat(Asme8.judgeRoundedCount(unplaced, 0.1, OptionalDouble.empty()))
+                    .hasSize(1);
+            List<Indication> specks = new ArrayList<>();
+            for (int i = 0; i < 13; i++) {
+                specks.add(at("POROSITY", 0.005, i * 0.2));
+            }
+            assertThat(Asme8.judgeRoundedCount(specks, 0.1, OptionalDouble.empty()))
+                    .isEmpty();
         }
     }
 

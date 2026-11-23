@@ -111,7 +111,9 @@ class TablesTest {
             assertThat(text).contains("counts over in");
             assertThat(text).containsPattern("0\\.500 +0\\.0313 +0\\.1250 +0\\.1667");
             assertThat(text).containsPattern("3\\.000 +0\\.0625 +0\\.1563 +0\\.3750");
-            assertThat(text.split("\n")).hasSize(10);
+            assertThat(text.split("\n")).hasSize(12);
+            assertThat(text).containsPattern("0\\.100 +0\\.0100 +0\\.0250 +0\\.0333 +12");
+            assertThat(text).containsPattern("0\\.125 +0\\.0156 +0\\.0313 +0\\.0417 +chart");
         }
 
         @Test

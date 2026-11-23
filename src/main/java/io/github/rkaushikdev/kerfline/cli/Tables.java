@@ -20,6 +20,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -187,12 +189,19 @@ public final class Tables {
 
     private static String roundedTable() {
         return print(
-                List.of(0.1, 0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 3.0),
-                List.of(
-                        right("t in", t -> Num.fixed(t, 3)),
-                        right("counts over in", t -> Num.fixed(Asme8.relevantOverIn(t), 4)),
-                        right("largest in", t -> Num.fixed(Asme8.roundedLimitIn(t, false), 4)),
-                        right("alone in", t -> Num.fixed(Asme8.roundedLimitIn(t, true), 4))));
+                        List.of(0.1, 0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 3.0),
+                        List.of(
+                                right("t in", t -> Num.fixed(t, 3)),
+                                right("counts over in", t -> Num.fixed(Asme8.relevantOverIn(t), 4)),
+                                right("largest in", t -> Num.fixed(Asme8.roundedLimitIn(t, false), 4)),
+                                right("alone in", t -> Num.fixed(Asme8.roundedLimitIn(t, true), 4)),
+                                right("per 6 in", Tables::roundedCount)))
+                + "\n\nPer 6 in is the count allowed on thin work; thicker work is read on the charts.";
+    }
+
+    private static String roundedCount(double thicknessIn) {
+        OptionalInt count = Asme8.roundedCountLimit(thicknessIn, OptionalDouble.empty());
+        return count.isPresent() ? String.valueOf(count.getAsInt()) : "chart";
     }
 
     /** The tables the command can print, in the order it lists them. */

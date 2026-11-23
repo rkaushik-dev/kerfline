@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
 
 /**
  * Dispatching a joint to the code that governs it.
@@ -105,7 +106,11 @@ public final class Engine {
             // The band is read on the weld thickness with the crown taken off.
             case ASME8 ->
                 new Asme8Context(
-                        Num.round(wallIn, 4), options.reinforcementIn() != null ? options.reinforcementIn() : 0);
+                        Num.round(wallIn, 4),
+                        options.reinforcementIn() != null ? options.reinforcementIn() : 0,
+                        options.weldLengthIn() != null
+                                ? OptionalDouble.of(options.weldLengthIn())
+                                : OptionalDouble.empty());
             default -> {
                 Double mating = options.matingWallIn();
                 boolean hasMating = mating != null && mating != 0 && !Double.isNaN(mating);
@@ -143,7 +148,7 @@ public final class Engine {
         return switch (context) {
             case Api1104Context api ->
                 Api1104.judgeJoint(indications, api.wallIn(), api.weldLengthIn(), api.crackRepairs());
-            case Asme8Context vessel -> Asme8.judgeJoint(indications, vessel.thicknessIn());
+            case Asme8Context vessel -> Asme8.judgeJoint(indications, vessel.thicknessIn(), vessel.weldLengthIn());
             case AsmeB313Context plant -> AsmeB313.judgeJoint(indications, plant.thinnerWallIn(), plant.service());
             case AwsD11Context structural ->
                 AwsD11.judgeJoint(indications, structural.thicknessIn(), structural.loading());
