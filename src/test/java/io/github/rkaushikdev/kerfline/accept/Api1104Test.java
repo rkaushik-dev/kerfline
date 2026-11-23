@@ -456,6 +456,82 @@ class Api1104Test {
     }
 
     @Nested
+    class HollowBeadAndBurnThrough {
+
+        @Test
+        void holdsBurnThroughToTheWallOnThinPipe() {
+            assertThat(Api1104.judgeBurnThrough(ind("BURN_THROUGH", 0.2), 0.28).disposition())
+                    .isEqualTo(Disposition.ACCEPT);
+            ClauseVerdict thin = Api1104.judgeBurnThrough(ind("BURN_THROUGH", 0.2), 0.154);
+            assertThat(thin.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(thin.reason()).hasValue("burn through 0.2 in across, cap is 0.154 in across");
+            assertThat(Api1104.judgeBurnThrough(ind("BURN_THROUGH", 0.3), 0.5).reason())
+                    .hasValue("burn through 0.3 in across, cap is 0.25 in across");
+        }
+
+        @Test
+        void sendsBurnThroughToTheRuleThatKnowsTheWall() {
+            assertThat(Api1104.judgeOne(ind("BURN_THROUGH", 0.2), 0.154).disposition())
+                    .isEqualTo(Disposition.REPAIR);
+            assertThat(Api1104.judgeOne(ind("BURN_THROUGH", 0.2), 0.5).disposition())
+                    .isEqualTo(Disposition.ACCEPT);
+        }
+
+        @Test
+        void wantsTwoClearInchesBetweenLongHollowBeads() {
+            List<ClauseVerdict> close = Api1104.judgeHollowBeadSpacing(
+                    List.of(at("HOLLOW_BEAD", 0.4, 0), at("HOLLOW_BEAD", 0.4, 1.5)), 20.8);
+            assertThat(close).singleElement().satisfies(verdict -> {
+                assertThat(verdict.reason())
+                        .hasValue("hollow bead over 0.25 in long with 1.1 in to the next, 2 in is needed");
+                assertThat(verdict.measured()).hasValue(1.1);
+            });
+            assertThat(Api1104.judgeHollowBeadSpacing(
+                            List.of(at("HOLLOW_BEAD", 0.4, 0), at("HOLLOW_BEAD", 0.4, 3)), 20.8))
+                    .isEmpty();
+        }
+
+        @Test
+        void letsShortHollowBeadsSitCloseTogether() {
+            assertThat(Api1104.judgeHollowBeadSpacing(
+                            List.of(at("HOLLOW_BEAD", 0.2, 0), at("HOLLOW_BEAD", 0.2, 0.5)), 20.8))
+                    .isEmpty();
+            assertThat(Api1104.judgeHollowBeadSpacing(List.of(at("HOLLOW_BEAD", 0.4, 0)), 20.8))
+                    .isEmpty();
+        }
+
+        @Test
+        void measuresTheLastBeadBeforeTheTieInToTheFirstAfterIt() {
+            List<Indication> set = List.of(at("HOLLOW_BEAD", 0.4, 19.5), at("HOLLOW_BEAD", 0.4, 1));
+            assertThat(Api1104.judgeHollowBeadSpacing(set, 20.8))
+                    .singleElement()
+                    .satisfies(verdict -> assertThat(verdict.measured()).hasValue(1.9));
+            assertThat(Api1104.judgeHollowBeadSpacing(set, 37.7)).isEmpty();
+        }
+
+        @Test
+        void capsHollowBeadAtEightPercentOfAWeldOfAnyLength() {
+            List<Indication> set = List.of(
+                    at("HOLLOW_BEAD", 0.5, 0),
+                    at("HOLLOW_BEAD", 0.5, 5),
+                    at("HOLLOW_BEAD", 0.5, 10),
+                    at("HOLLOW_BEAD", 0.5, 15));
+            assertThat(Api1104.judgeAggregate(set, IndicationType.HOLLOW_BEAD, 20.8))
+                    .singleElement()
+                    .satisfies(verdict -> assertThat(verdict.reason())
+                            .hasValue("hollow bead totals 2 in, over 1.664 in allowed in a 20.8 in weld"));
+        }
+
+        @Test
+        void failsAJointOnCrowdedHollowBead() {
+            List<Indication> set = List.of(at("HOLLOW_BEAD", 0.4, 0), at("HOLLOW_BEAD", 0.4, 1.5));
+            JointVerdict result = Api1104.judgeJoint(set, 0.28, 37.7);
+            assertThat(result.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(result.reasons()).hasSize(1).allMatch(reason -> reason.contains("to the next"));
+        }
+    }
+
+    @Nested
     class Accumulation {
 
         @Test

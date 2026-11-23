@@ -44,6 +44,8 @@ public final class Api1104 {
     private static final double ISOLATED_WIDTH_IN = 0.125;
     private static final double ISOLATED_WINDOW_IN = 0.5;
     private static final int ISOLATED_COUNT = 4;
+    private static final double HOLLOW_BEAD_SPACED_IN = 0.25;
+    private static final double HOLLOW_BEAD_GAP_IN = 2;
     private static final String ACCUMULATION_CLAUSE = "9.3.10";
     private static final double ACCUMULATION_WINDOW_IN = 2;
     private static final double PORE_IN = 0.125;
@@ -60,7 +62,9 @@ public final class Api1104 {
         rules.put(IndicationType.IP, new Api1104Rule("9.3.2", 1, 1, shortWeld, none, "incomplete penetration"));
         rules.put(IndicationType.IF, new Api1104Rule("9.3.4", 1, 1, shortWeld, none, "incomplete fusion"));
         rules.put(IndicationType.SLAG, new Api1104Rule("9.3.6", 2, 2, none, none, "slag inclusion"));
-        rules.put(IndicationType.HOLLOW_BEAD, new Api1104Rule("9.3.7", 0.5, 2, none, none, "hollow bead"));
+        rules.put(
+                IndicationType.HOLLOW_BEAD,
+                new Api1104Rule("9.3.7", 0.5, 2, none, OptionalDouble.of(PERCENT_CAP), "hollow bead"));
         rules.put(IndicationType.BURN_THROUGH, new Api1104Rule("9.3.5", 0.25, 0.5, none, none, "burn through"));
         rules.put(
                 IndicationType.UNDERCUT,
@@ -240,6 +244,21 @@ public final class Api1104 {
                         .indication(indication));
     }
 
+    /**
+     * Burn through is held to a quarter inch across, and never deeper into the joint than the wall
+     * it went through: on thin wall a quarter inch hole is most of the pipe.
+     */
+    public static ClauseVerdict judgeBurnThrough(Indication indication, double wallIn) {
+        Guard.requireAbove(wallIn, 0, "wall thickness");
+        Api1104Rule rule = RULES.get(IndicationType.BURN_THROUGH);
+        double cap = Math.min(rule.singleIn(), Num.round(wallIn, 4));
+        return Common.capVerdict(CapCheck.of(CODE, rule.clause(), rule.label())
+                .size(Measure.governingSizeIn(indication))
+                .cap(cap)
+                .units("in across")
+                .indication(indication));
+    }
+
     /** One indication, sent to the rule its type is judged under. */
     public static ClauseVerdict judgeOne(Indication indication, double wallIn) {
         return switch (indication.type()) {
@@ -247,8 +266,45 @@ public final class Api1104 {
             case POROSITY -> judgePorosity(indication, wallIn);
             case CLUSTER -> judgeCluster(indication);
             case SLAG -> judgeSlag(indication);
+            case BURN_THROUGH -> judgeBurnThrough(indication, wallIn);
             default -> judgeByLength(indication);
         };
+    }
+
+    /**
+     * Hollow bead over a quarter inch long is allowed only with two clear inches to the next one, so
+     * two acceptable lengths of it cannot sit end to end in the root. Read round the joint, so the last
+     * one before the tie-in is measured to the first one after it.
+     */
+    public static List<ClauseVerdict> judgeHollowBeadSpacing(List<Indication> indications, double weldLengthIn) {
+        Guard.requireAbove(weldLengthIn, 0, "weld length");
+        List<Indication> spaced = Measure.alongTheWeld(indications).stream()
+                .filter(indication -> indication.type() == IndicationType.HOLLOW_BEAD)
+                .filter(indication -> Measure.governingSizeIn(indication) > HOLLOW_BEAD_SPACED_IN)
+                .toList();
+        if (spaced.size() < 2) {
+            return List.of();
+        }
+        String clause = RULES.get(IndicationType.HOLLOW_BEAD).clause();
+        List<ClauseVerdict> verdicts = new ArrayList<>();
+        for (int i = 0; i < spaced.size(); i++) {
+            Indication before = spaced.get(i);
+            boolean roundTheBack = i == spaced.size() - 1;
+            Indication after = spaced.get(roundTheBack ? 0 : i + 1);
+            double gap = Measure.gapIn(before, after) + (roundTheBack ? weldLengthIn : 0);
+            if (gap < HOLLOW_BEAD_GAP_IN) {
+                double clear = Num.round(Math.max(0, gap), 4);
+                verdicts.add(Verdict.makeVerdict(
+                        Disposition.REPAIR,
+                        CODE,
+                        clause,
+                        "hollow bead over " + Num.text(HOLLOW_BEAD_SPACED_IN) + " in long with " + Num.text(clear)
+                                + " in to the next, " + Num.text(HOLLOW_BEAD_GAP_IN) + " in is needed",
+                        before,
+                        clear));
+            }
+        }
+        return List.copyOf(verdicts);
     }
 
     /**
@@ -379,6 +435,7 @@ public final class Api1104 {
             verdicts.addAll(judgeAggregate(indications, rule, weldLengthIn));
         }
         verdicts.addAll(judgeIsolatedSlag(indications, weldLengthIn));
+        verdicts.addAll(judgeHollowBeadSpacing(indications, weldLengthIn));
         verdicts.addAll(judgeAccumulation(indications, weldLengthIn));
         return Common.settle(verdicts, CODE, "9.3");
     }

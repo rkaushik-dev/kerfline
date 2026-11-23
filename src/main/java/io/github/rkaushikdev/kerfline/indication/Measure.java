@@ -5,6 +5,7 @@ import io.github.rkaushikdev.kerfline.errors.Details;
 import io.github.rkaushikdev.kerfline.geom.Distance;
 import io.github.rkaushikdev.kerfline.util.Guard;
 import io.github.rkaushikdev.kerfline.util.Num;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -110,6 +111,26 @@ public final class Measure {
         return indications.stream()
                 .filter(indication -> governingSizeIn(indication) > limitIn)
                 .toList();
+    }
+
+    /** The located indications in order along the weld; the ones with no position take no part. */
+    public static List<Indication> alongTheWeld(List<Indication> indications) {
+        Guard.requireArray(indications, "indications");
+        return indications.stream()
+                .filter(indication -> indication.at().isPresent())
+                .sorted(Comparator.comparingDouble(indication -> indication.at().getAsDouble()))
+                .toList();
+    }
+
+    /**
+     * The clear weld between the far end of one indication and the start of the next one along,
+     * which is negative when the two overlap. Both must carry a position.
+     */
+    public static double gapIn(Indication before, Indication after) {
+        if (before.at().isEmpty() || after.at().isEmpty()) {
+            throw new BadInputException("a gap is only measured between located indications");
+        }
+        return after.at().getAsDouble() - (before.at().getAsDouble() + governingSizeIn(before));
     }
 
     /**

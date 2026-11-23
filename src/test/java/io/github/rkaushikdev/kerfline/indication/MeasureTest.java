@@ -261,4 +261,32 @@ class MeasureTest {
             assertThatThrownBy(() -> Measure.worstWindowRound(set, 12, 0)).hasMessageContaining("round the joint");
         }
     }
+
+    @Nested
+    class AlongTheWeld {
+
+        @Test
+        void putsTheLocatedOnesInOrderAndDropsTheRest() {
+            Indication first = indication(slag(0.2).at(1));
+            Indication second = indication(slag(0.2).at(4));
+            List<Indication> ordered = Measure.alongTheWeld(List.of(second, indication(slag(0.3)), first));
+            assertThat(ordered).containsExactly(first, second);
+        }
+
+        @Test
+        void measuresTheClearWeldFromTheFarEndOfOneToTheNext() {
+            Indication first = indication(slag(0.5).at(1));
+            assertThat(Measure.gapIn(first, indication(slag(0.2).at(4)))).isCloseTo(2.5, digits(4));
+            assertThat(Measure.gapIn(first, indication(slag(0.2).at(1.25)))).isCloseTo(-0.25, digits(4));
+        }
+
+        @Test
+        void refusesAGapToAnIndicationThatWasNeverLocated() {
+            Indication placed = indication(slag(0.5).at(1));
+            assertThatThrownBy(() -> Measure.gapIn(placed, indication(slag(0.2))))
+                    .hasMessageContaining("located indications");
+            assertThatThrownBy(() -> Measure.gapIn(indication(slag(0.2)), placed))
+                    .hasMessageContaining("located indications");
+        }
+    }
 }

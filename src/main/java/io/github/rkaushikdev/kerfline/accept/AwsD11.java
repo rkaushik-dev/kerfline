@@ -6,7 +6,6 @@ import io.github.rkaushikdev.kerfline.indication.WeldWindow;
 import io.github.rkaushikdev.kerfline.util.Guard;
 import io.github.rkaushikdev.kerfline.util.Num;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -141,18 +140,15 @@ public final class AwsD11 {
 
     /** The clearance rule between neighbouring discontinuities, in order along the weld. */
     public static List<ClauseVerdict> judgeClearance(List<Indication> indications, String loading) {
-        Guard.requireArray(indications, "indications");
-        List<Indication> placed = indications.stream()
+        List<Indication> placed = Measure.alongTheWeld(indications).stream()
                 .filter(indication -> !indication.planar())
-                .filter(indication -> indication.at().isPresent())
-                .sorted(Comparator.comparingDouble(Common::at))
                 .toList();
 
         List<ClauseVerdict> verdicts = new ArrayList<>();
         for (int i = 1; i < placed.size(); i++) {
             Indication previous = placed.get(i - 1);
             Indication current = placed.get(i);
-            double gap = Common.at(current) - (Common.at(previous) + Measure.governingSizeIn(previous));
+            double gap = Measure.gapIn(previous, current);
             double largest = Math.max(Measure.governingSizeIn(previous), Measure.governingSizeIn(current));
             double wanted = requiredClearanceIn(largest, loading);
             if (gap < wanted) {

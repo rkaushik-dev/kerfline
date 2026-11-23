@@ -8,7 +8,6 @@ import io.github.rkaushikdev.kerfline.util.BandTable;
 import io.github.rkaushikdev.kerfline.util.Guard;
 import io.github.rkaushikdev.kerfline.util.Num;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -71,11 +70,7 @@ public final class Asme8 {
      * times the longest indication in the group so far. Indications with no position take no part.
      */
     public static List<List<Indication>> alignedGroups(List<Indication> indications) {
-        Guard.requireArray(indications, "indications");
-        List<Indication> placed = indications.stream()
-                .filter(indication -> indication.at().isPresent())
-                .sorted(Comparator.comparingDouble(Common::at))
-                .toList();
+        List<Indication> placed = Measure.alongTheWeld(indications);
         if (placed.isEmpty()) {
             return List.of();
         }
@@ -89,8 +84,7 @@ public final class Asme8 {
             for (Indication member : current) {
                 longest = Math.max(longest, Measure.governingSizeIn(member));
             }
-            double gap = Common.at(placed.get(i)) - (Common.at(previous) + Measure.governingSizeIn(previous));
-            if (gap > GAP_MULTIPLE * longest) {
+            if (Measure.gapIn(previous, placed.get(i)) > GAP_MULTIPLE * longest) {
                 groups.add(new ArrayList<>(List.of(placed.get(i))));
             } else {
                 current.add(placed.get(i));
