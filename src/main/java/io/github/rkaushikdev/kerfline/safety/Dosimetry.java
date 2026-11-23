@@ -7,6 +7,7 @@ import io.github.rkaushikdev.kerfline.util.Guard;
 import io.github.rkaushikdev.kerfline.util.Num;
 import java.util.List;
 import java.util.OptionalDouble;
+import java.util.function.Predicate;
 
 /**
  * Dose records for the crew.
@@ -15,6 +16,10 @@ import java.util.OptionalDouble;
  * up to it: there are two investigation levels well below, and crossing either one starts a
  * conversation rather than stopping work. That is the entire point of setting them where they
  * are.
+ *
+ * <p>A declared pregnant worker is held to a second limit, five hundred millirem to the embryo or
+ * fetus over the whole pregnancy, which runs from conception rather than from the day she told
+ * anybody.
  *
  * <p>Two things here are deliberately awkward. A quarterly badge that has not come back from the
  * reader is not a zero, so an unreturned badge makes the total unknown rather than making it
@@ -28,6 +33,8 @@ public final class Dosimetry {
     private static final double LEVEL_ONE = 0.1;
     private static final double LEVEL_TWO = 0.3;
     private static final double DEFAULT_TOLERANCE = 0.3;
+    private static final double GESTATION_LIMIT_MREM = 500;
+    private static final double LATE_DECLARATION_MREM = 50;
 
     private Dosimetry() {}
 
@@ -70,23 +77,77 @@ public final class Dosimetry {
     }
 
     /**
-     * The dose in a window, from every badge period that starts or ends inside it. An unreturned
-     * badge makes the total unknown, which is reported rather than quietly dropped.
+     * The dose in a window, from every badge period that overlaps it, including one that runs right
+     * across it: an annual badge worn through a quarter is in that quarter. An unreturned badge makes
+     * the total unknown, which is reported rather than quietly dropped.
      */
     public static DosePeriod doseInPeriod(List<BadgeRecord> records, String from, String to) {
         Guard.requireArray(records, "dose records");
         Dates.requireDay(from, "period start");
         Dates.requireDay(to, "period end");
-        List<BadgeRecord> inWindow = records.stream()
-                .filter(record -> Dates.withinSpan(record.from(), from, to) || Dates.withinSpan(record.to(), from, to))
-                .toList();
+        return sum(
+                records,
+                from,
+                to,
+                record -> record.from().compareTo(to) <= 0 && record.to().compareTo(from) >= 0);
+    }
+
+    /** The badges a test picks out, added up, with any still out making the total incomplete. */
+    private static DosePeriod sum(List<BadgeRecord> records, String from, String to, Predicate<BadgeRecord> counts) {
+        List<BadgeRecord> counted = records.stream().filter(counts).toList();
         int outstanding =
-                (int) inWindow.stream().filter(record -> !record.returned()).count();
-        List<Double> known = inWindow.stream()
+                (int) counted.stream().filter(record -> !record.returned()).count();
+        List<Double> known = counted.stream()
                 .filter(BadgeRecord::returned)
                 .map(record -> record.mrem().orElseThrow())
                 .toList();
-        return new DosePeriod(from, to, inWindow.size(), Num.round(Num.sum(known), 1), outstanding, outstanding == 0);
+        return new DosePeriod(from, to, counted.size(), Num.round(Num.sum(known), 1), outstanding, outstanding == 0);
+    }
+
+    /** The limit on the dose to the embryo or fetus over the whole pregnancy, five hundred millirem. */
+    public static double gestationLimitMrem() {
+        return GESTATION_LIMIT_MREM;
+    }
+
+    /**
+     * A declared pregnant worker's standing. The limit covers the whole pregnancy, so the dose
+     * before the declaration counts against it. When that dose was already within fifty millirem of
+     * the limit by the day she declared, the rest of the pregnancy is allowed fifty millirem more
+     * whatever the total comes to. A badge counts toward the part of the pregnancy its period ends
+     * in, so one running across the declaration is held against the allowance after it.
+     */
+    public static GestationStanding judgeGestation(
+            List<BadgeRecord> records, String conceivedOn, String declaredOn, String endingOn) {
+        Guard.requireArray(records, "dose records");
+        Dates.requireDay(conceivedOn, "estimated conception date");
+        Dates.requireDay(declaredOn, "declaration date");
+        Dates.requireDay(endingOn, "date");
+        if (declaredOn.compareTo(conceivedOn) < 0 || endingOn.compareTo(declaredOn) < 0) {
+            throw new BadInputException(
+                    "a pregnancy is declared after conception and judged after the declaration",
+                    Details.of("conceivedOn", conceivedOn, "declaredOn", declaredOn, "endingOn", endingOn));
+        }
+        DosePeriod before = sum(
+                records,
+                conceivedOn,
+                declaredOn,
+                record -> record.to().compareTo(conceivedOn) >= 0 && record.to().compareTo(declaredOn) < 0);
+        DosePeriod since = sum(
+                records,
+                declaredOn,
+                endingOn,
+                record -> record.to().compareTo(declaredOn) >= 0 && record.to().compareTo(endingOn) <= 0);
+        double allowed = before.mrem() >= GESTATION_LIMIT_MREM - LATE_DECLARATION_MREM
+                ? LATE_DECLARATION_MREM
+                : Num.round(GESTATION_LIMIT_MREM - before.mrem(), 1);
+        DoseStanding standing =
+                since.mrem() > allowed ? DoseStanding.OVER_THE_GESTATION_LIMIT : DoseStanding.WITHIN_LIMITS;
+        return new GestationStanding(
+                before,
+                since,
+                allowed,
+                Num.round(Math.max(0, allowed - since.mrem()), 1),
+                before.complete() && since.complete() ? standing : DoseStanding.INCOMPLETE_RECORD);
     }
 
     /** The rolling twelve month dose ending on a day. */
@@ -102,21 +163,29 @@ public final class Dosimetry {
     public static AnnualStanding judgeAnnual(List<BadgeRecord> records, String endingOn) {
         DosePeriod period = annualDose(records, endingOn);
         InvestigationLevels levels = investigationLevels();
-        DoseStanding standing = DoseStanding.WITHIN_LIMITS;
-        if (period.mrem() > ANNUAL_LIMIT_MREM) {
-            standing = DoseStanding.OVER_THE_ANNUAL_LIMIT;
-        } else if (period.mrem() > levels.levelTwoMrem()) {
-            standing = DoseStanding.LEVEL_TWO_INVESTIGATION;
-        } else if (period.mrem() > levels.levelOneMrem()) {
-            standing = DoseStanding.LEVEL_ONE_INVESTIGATION;
-        }
         return new AnnualStanding(
                 period,
                 ANNUAL_LIMIT_MREM,
                 levels,
-                period.complete() ? standing : DoseStanding.INCOMPLETE_RECORD,
+                annualStanding(period, levels),
                 Num.round(Math.max(0, ANNUAL_LIMIT_MREM - period.mrem()), 1),
                 Num.round(period.mrem() / ANNUAL_LIMIT_MREM, 4));
+    }
+
+    /** The rung of the ladder a complete year reaches; an incomplete one is never placed on it. */
+    private static DoseStanding annualStanding(DosePeriod period, InvestigationLevels levels) {
+        if (!period.complete()) {
+            return DoseStanding.INCOMPLETE_RECORD;
+        }
+        if (period.mrem() > ANNUAL_LIMIT_MREM) {
+            return DoseStanding.OVER_THE_ANNUAL_LIMIT;
+        }
+        if (period.mrem() > levels.levelTwoMrem()) {
+            return DoseStanding.LEVEL_TWO_INVESTIGATION;
+        }
+        return period.mrem() > levels.levelOneMrem()
+                ? DoseStanding.LEVEL_ONE_INVESTIGATION
+                : DoseStanding.WITHIN_LIMITS;
     }
 
     public static PocketComparison comparePocket(double badgeMrem, double pocketMrem) {

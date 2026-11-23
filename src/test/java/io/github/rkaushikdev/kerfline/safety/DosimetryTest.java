@@ -122,6 +122,85 @@ class DosimetryTest {
     }
 
     @Nested
+    class ABadgeLongerThanTheWindow {
+
+        @Test
+        void countsABadgeThatRunsRightAcrossTheWindow() {
+            List<BadgeRecord> annual = List.of(badge("2025-01-01", "2025-12-31", 400));
+            DosePeriod quarter = Dosimetry.doseInPeriod(annual, "2025-04-01", "2025-06-30");
+            assertThat(quarter.records()).isEqualTo(1);
+            assertThat(quarter.mrem()).isEqualTo(400);
+        }
+
+        @Test
+        void stillLeavesOutABadgeThatEndsTheDayBeforeTheWindow() {
+            List<BadgeRecord> early = List.of(badge("2025-01-01", "2025-03-31", 400));
+            assertThat(Dosimetry.doseInPeriod(early, "2025-04-01", "2025-06-30").records())
+                    .isZero();
+            assertThat(Dosimetry.doseInPeriod(early, "2025-03-31", "2025-06-30").records())
+                    .isEqualTo(1);
+        }
+    }
+
+    @Nested
+    class DeclaredPregnancy {
+
+        private final List<BadgeRecord> records = List.of(
+                badge("2025-01-01", "2025-01-31", 120),
+                badge("2025-02-01", "2025-02-28", 100),
+                badge("2025-03-01", "2025-03-31", 60),
+                badge("2025-04-01", "2025-04-30", 80));
+
+        @Test
+        void holdsTheWholePregnancyToFiveHundredMillirem() {
+            assertThat(Dosimetry.gestationLimitMrem()).isEqualTo(500);
+            GestationStanding standing = Dosimetry.judgeGestation(records, "2025-02-01", "2025-03-01", "2025-04-30");
+            assertThat(standing.beforeDeclaration().mrem()).isEqualTo(100);
+            assertThat(standing.sinceDeclaration().mrem()).isEqualTo(140);
+            assertThat(standing.allowedSinceMrem()).isEqualTo(400);
+            assertThat(standing.remainingMrem()).isEqualTo(260);
+            assertThat(standing.standing()).isEqualTo(DoseStanding.WITHIN_LIMITS);
+        }
+
+        @Test
+        void allowsOnlyFiftyMoreOnceTheDoseWasNearTheLimitAtDeclaration() {
+            List<BadgeRecord> heavy =
+                    List.of(badge("2025-01-01", "2025-02-28", 470), badge("2025-03-01", "2025-03-31", 60));
+            GestationStanding standing = Dosimetry.judgeGestation(heavy, "2025-01-01", "2025-03-01", "2025-03-31");
+            assertThat(standing.allowedSinceMrem()).isEqualTo(50);
+            assertThat(standing.remainingMrem()).isZero();
+            assertThat(standing.standing()).isEqualTo(DoseStanding.OVER_THE_GESTATION_LIMIT);
+            assertThat(standing.standing().label()).isEqualTo("over the gestation limit");
+        }
+
+        @Test
+        void allowsFiftyMoreEvenPastTheLimitWhenItWasPassedBeforeAnybodyKnew() {
+            List<BadgeRecord> over =
+                    List.of(badge("2025-01-01", "2025-02-28", 620), badge("2025-03-01", "2025-03-31", 40));
+            GestationStanding standing = Dosimetry.judgeGestation(over, "2025-01-01", "2025-03-01", "2025-03-31");
+            assertThat(standing.standing()).isEqualTo(DoseStanding.WITHIN_LIMITS);
+            assertThat(standing.remainingMrem()).isEqualTo(10);
+        }
+
+        @Test
+        void neverCallsItWithinLimitsWithABadgeStillOut() {
+            List<BadgeRecord> out = new ArrayList<>(records);
+            out.add(badge("2025-05-01", "2025-05-31", null, false));
+            assertThat(Dosimetry.judgeGestation(out, "2025-02-01", "2025-03-01", "2025-05-31")
+                            .standing())
+                    .isEqualTo(DoseStanding.INCOMPLETE_RECORD);
+        }
+
+        @Test
+        void refusesADeclarationBeforeConceptionOrAJudgementBeforeTheDeclaration() {
+            assertThatThrownBy(() -> Dosimetry.judgeGestation(records, "2025-03-01", "2025-02-01", "2025-04-30"))
+                    .hasMessageContaining("declared after conception");
+            assertThatThrownBy(() -> Dosimetry.judgeGestation(records, "2025-02-01", "2025-03-01", "2025-02-15"))
+                    .hasMessageContaining("judged after the declaration");
+        }
+    }
+
+    @Nested
     class AnnualDose {
 
         @Test
