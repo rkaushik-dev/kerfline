@@ -71,6 +71,52 @@ class Api1104Test {
     }
 
     @Nested
+    class CrackRepairs {
+
+        @Test
+        void letsTheCompanyHaveAShortCrackRepairedRatherThanCutOut() {
+            // Eight percent of a 20.8 in weld is 1.664 in.
+            ClauseVerdict verdict = Api1104.judgeCrack(ind("CRACK", 1.2), 20.8, true);
+            assertThat(verdict.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(verdict.reason())
+                    .hasValue("crack 1.2 in long, repairable on the company's authority under 1.664 in");
+        }
+
+        @Test
+        void cutsOutACrackOfEightPercentOrMoreWhateverTheCompanySays() {
+            assertThat(Api1104.judgeCrack(ind("CRACK", 1.664), 20.8, true).disposition())
+                    .isEqualTo(Disposition.REJECT);
+            assertThat(Api1104.judgeCrack(ind("CRACK", 2), 20.8, true).reason()).hasValue("crack 2 in long");
+        }
+
+        @Test
+        void cutsOutEveryCrackWithoutTheAuthority() {
+            assertThat(Api1104.judgeCrack(ind("CRACK", 0.2), 20.8, false).disposition())
+                    .isEqualTo(Disposition.REJECT);
+            assertThat(Api1104.judgeCrack(ind("CRACK", 0.2)).disposition()).isEqualTo(Disposition.REJECT);
+        }
+
+        @Test
+        void stillLetsAShallowCraterCrackThrough() {
+            Indication crater = ind("CRACK", 0.1, input -> input.note("crater"));
+            assertThat(Api1104.judgeCrack(crater, 20.8, true).disposition()).isEqualTo(Disposition.ACCEPT);
+        }
+
+        @Test
+        void refusesAnAuthorisedRepairOnAWeldWithNoLength() {
+            assertThatThrownBy(() -> Api1104.judgeCrack(ind("CRACK", 0.2), 0, true))
+                    .hasMessageContaining("weld length");
+        }
+
+        @Test
+        void carriesTheAuthorityThroughTheWholeJoint() {
+            List<Indication> set = List.of(at("CRACK", 1, 4), at("POROSITY", 0.05, 8));
+            assertThat(Api1104.judgeJoint(set, 0.28, 20.8, true).disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(Api1104.judgeJoint(set, 0.28, 20.8).disposition()).isEqualTo(Disposition.REJECT);
+        }
+    }
+
+    @Nested
     class JudgePorosity {
 
         @Test

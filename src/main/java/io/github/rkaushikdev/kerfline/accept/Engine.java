@@ -96,7 +96,7 @@ public final class Engine {
                             "API 1104 needs the length of weld round the joint",
                             Details.of("weldLengthIn", weldLengthIn));
                 }
-                yield new Api1104Context(wallIn, weldLengthIn);
+                yield new Api1104Context(wallIn, weldLengthIn, Boolean.TRUE.equals(options.crackRepairs()));
             }
             // Structural work is judged on the weld itself and on whether the member flexes in
             // service, which is not something the joint record knows.
@@ -141,7 +141,8 @@ public final class Engine {
 
     private static JointVerdict judgeWith(List<Indication> indications, CodeContext context) {
         return switch (context) {
-            case Api1104Context api -> Api1104.judgeJoint(indications, api.wallIn(), api.weldLengthIn());
+            case Api1104Context api ->
+                Api1104.judgeJoint(indications, api.wallIn(), api.weldLengthIn(), api.crackRepairs());
             case Asme8Context vessel -> Asme8.judgeJoint(indications, vessel.thicknessIn());
             case AsmeB313Context plant -> AsmeB313.judgeJoint(indications, plant.thinnerWallIn(), plant.service());
             case AwsD11Context structural ->

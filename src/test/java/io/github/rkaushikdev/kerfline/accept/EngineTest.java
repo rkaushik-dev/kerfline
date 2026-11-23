@@ -73,6 +73,41 @@ class EngineTest {
         }
 
         @Test
+        void tellsApi1104WhetherTheCompanyRepairsCracks() {
+            assertThat(((Api1104Context) Engine.contextFor("API1104", JOINT)).crackRepairs())
+                    .isFalse();
+            Api1104Context authorised =
+                    (Api1104Context) Engine.contextFor("API1104", JOINT, JudgeOptions.NONE.crackRepairs(true));
+            assertThat(authorised.crackRepairs()).isTrue();
+            assertThat(authorised.weldLengthIn()).isCloseTo(20.8129, digits(3));
+        }
+
+        @Test
+        void repairsAShortCrackOnlyUnderTheAuthority() {
+            List<Indication> crack = List.of(at("CRACK", 1, 4));
+            assertThat(Engine.judge("API1104", crack, JOINT).disposition()).isEqualTo(Disposition.REJECT);
+            assertThat(Engine.judge("API1104", crack, JOINT, JudgeOptions.NONE.crackRepairs(true))
+                            .disposition())
+                    .isEqualTo(Disposition.REPAIR);
+            assertThat(Engine.judge("B31.3", crack, JOINT, JudgeOptions.NONE.crackRepairs(true))
+                            .disposition())
+                    .isEqualTo(Disposition.REJECT);
+        }
+
+        @Test
+        void keepsTheAuthorityAcrossTheOtherSetters() {
+            JudgeOptions options = JudgeOptions.NONE
+                    .crackRepairs(true)
+                    .weldLengthIn(30)
+                    .loading("cyclic")
+                    .reinforcementIn(0.1)
+                    .matingWallIn(0.3)
+                    .service("normal");
+            assertThat(options.crackRepairs()).isTrue();
+            assertThat(options.weldLengthIn()).isEqualTo(30);
+        }
+
+        @Test
         void givesSectionViiiTheWeldThickness() {
             assertThat(((Asme8Context) Engine.contextFor("ASME8", JOINT)).thicknessIn())
                     .isCloseTo(0.28, digits(4));

@@ -52,6 +52,7 @@ public final class Api1104 {
     private static final double PORE_WALL_FRACTION = 0.25;
     private static final double CLUSTER_IN = 0.5;
     private static final double CRATER_CRACK_IN = 5.0 / 32;
+    private static final String CRACK_CLAUSE = "9.3.9";
 
     private Api1104() {}
 
@@ -91,21 +92,38 @@ public final class Api1104 {
      * is worth.
      */
     public static ClauseVerdict judgeCrack(Indication indication) {
-        double size = Measure.governingSizeIn(indication);
+        return judgeCrack(indication, Double.POSITIVE_INFINITY, false);
+    }
+
+    /**
+     * A crack under a company that authorises crack repairs. The weld still fails, but a crack shorter
+     * than eight percent of the weld may be ground out and rewelded instead of the joint being cut
+     * out. Without that authority, or at eight percent and over, the joint comes out.
+     */
+    public static ClauseVerdict judgeCrack(Indication indication, double weldLengthIn, boolean repairAuthorised) {
+        double size = Num.round(Measure.governingSizeIn(indication), 3);
         boolean isCrater = indication
                 .note()
                 .filter(note -> note.equals("crater") || note.equals("star"))
                 .isPresent();
         if (isCrater && size < CRATER_CRACK_IN) {
-            return Verdict.accept(CODE, "9.3.9");
+            return Verdict.accept(CODE, CRACK_CLAUSE);
         }
-        return Verdict.makeVerdict(
-                Disposition.REJECT,
-                CODE,
-                "9.3.9",
-                "crack " + Num.text(Num.round(size, 3)) + " in long",
-                indication,
-                size);
+        String reason = "crack " + Num.text(size) + " in long";
+        if (repairAuthorised) {
+            Guard.requireAbove(weldLengthIn, 0, "weld length");
+            double limit = Num.round(weldLengthIn * PERCENT_CAP, 4);
+            if (size < limit) {
+                return Verdict.makeVerdict(
+                        Disposition.REPAIR,
+                        CODE,
+                        CRACK_CLAUSE,
+                        reason + ", repairable on the company's authority under " + Num.text(limit) + " in",
+                        indication,
+                        size);
+            }
+        }
+        return Verdict.makeVerdict(Disposition.REJECT, CODE, CRACK_CLAUSE, reason, indication, size);
     }
 
     /** A single pore is capped both absolutely and against the wall it is in. */
@@ -259,10 +277,16 @@ public final class Api1104 {
                 .indication(indication));
     }
 
-    /** One indication, sent to the rule its type is judged under. */
+    /** One indication, sent to the rule its type is judged under, with no crack repairs authorised. */
     public static ClauseVerdict judgeOne(Indication indication, double wallIn) {
+        return judgeOne(indication, wallIn, Double.POSITIVE_INFINITY, false);
+    }
+
+    /** One indication, on a weld whose length matters to a crack the company lets be repaired. */
+    public static ClauseVerdict judgeOne(
+            Indication indication, double wallIn, double weldLengthIn, boolean crackRepairs) {
         return switch (indication.type()) {
-            case CRACK -> judgeCrack(indication);
+            case CRACK -> judgeCrack(indication, weldLengthIn, crackRepairs);
             case POROSITY -> judgePorosity(indication, wallIn);
             case CLUSTER -> judgeCluster(indication);
             case SLAG -> judgeSlag(indication);
@@ -421,15 +445,21 @@ public final class Api1104 {
                 totalIn);
     }
 
-    /** Judge a whole joint against the code: each indication, then the aggregates rule by rule. */
+    /** Judge a whole joint against the code with no crack repairs authorised. */
     public static JointVerdict judgeJoint(List<Indication> indications, double wallIn, double weldLengthIn) {
+        return judgeJoint(indications, wallIn, weldLengthIn, false);
+    }
+
+    /** Judge a whole joint against the code: each indication, then the aggregates rule by rule. */
+    public static JointVerdict judgeJoint(
+            List<Indication> indications, double wallIn, double weldLengthIn, boolean crackRepairs) {
         Guard.requireArray(indications, "indications");
         Guard.requireAbove(wallIn, 0, "wall thickness");
         Guard.requireAbove(weldLengthIn, 0, "weld length");
 
         List<ClauseVerdict> verdicts = new ArrayList<>();
         for (Indication indication : indications) {
-            verdicts.add(judgeOne(indication, wallIn));
+            verdicts.add(judgeOne(indication, wallIn, weldLengthIn, crackRepairs));
         }
         for (Api1104Rule rule : lengthRules()) {
             verdicts.addAll(judgeAggregate(indications, rule, weldLengthIn));
