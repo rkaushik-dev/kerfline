@@ -19,6 +19,7 @@ public record InterpretationSheet(
         Optional<String> code,
         Optional<String> technique,
         OptionalDouble wallIn,
+        OptionalDouble odIn,
         List<String> films,
         List<Indication> indications,
         Optional<SheetVerdict> verdict,

@@ -154,6 +154,61 @@ class InterpretationTest {
     }
 
     @Nested
+    class WhereTheCrewFindsIt {
+
+        private InterpretationSheet onSixInchPipe() {
+            return sheet(fullInput()
+                    .odIn(6.625)
+                    .indications(List.of(
+                            Measure.makeIndication(IndicationInput.of("SLAG", 0.15)
+                                    .at(8)
+                                    .film("2")
+                                    .note("isolated")),
+                            Measure.makeIndication(
+                                    IndicationInput.of("POROSITY", 0.04).at(3).film("1")),
+                            Measure.makeIndication(IndicationInput.of("UNDERCUT", 0.3)))));
+        }
+
+        @Test
+        void putsEachLocatedFindingAtAClockPosition() {
+            List<IndicationRow> rows = Interpretation.indicationRows(onSixInchPipe());
+            assertThat(rows.stream().map(IndicationRow::clock))
+                    .containsExactly(Optional.empty(), Optional.of("1:44"), Optional.of("4:37"));
+        }
+
+        @Test
+        void carriesTheReadersNoteOntoTheRow() {
+            List<IndicationRow> rows = Interpretation.indicationRows(onSixInchPipe());
+            assertThat(rows.get(2).note()).isEqualTo("isolated");
+            assertThat(rows.get(1).note()).isEmpty();
+        }
+
+        @Test
+        void printsTheClockAndNoteColumnsOnlyWhenTheSheetHasThem() {
+            String located = Interpretation.renderSheet(onSixInchPipe());
+            assertThat(located).contains("clock").contains("4:37").contains("isolated");
+            String plain = Interpretation.renderSheet(full());
+            assertThat(plain).doesNotContain("clock").doesNotContain("note");
+            for (String line : located.split("\n")) {
+                assertThat(line.length()).isLessThanOrEqualTo(78);
+            }
+        }
+
+        @Test
+        void leavesTheClockOffASheetThatDoesNotKnowThePipe() {
+            assertThat(Interpretation.indicationRows(full()).stream().map(IndicationRow::clock))
+                    .containsOnly(Optional.empty());
+            assertThat(full().odIn()).isEmpty();
+            assertThat(onSixInchPipe().odIn()).hasValue(6.625);
+        }
+
+        @Test
+        void summarisesTheLargestFindingWhereverItSits() {
+            assertThat(Interpretation.summarise(onSixInchPipe()).largestIn()).isEqualTo(0.3);
+        }
+    }
+
+    @Nested
     class RenderSheet {
 
         @Test

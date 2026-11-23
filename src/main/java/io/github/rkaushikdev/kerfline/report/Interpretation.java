@@ -2,6 +2,7 @@ package io.github.rkaushikdev.kerfline.report;
 
 import io.github.rkaushikdev.kerfline.errors.BadInputException;
 import io.github.rkaushikdev.kerfline.errors.Details;
+import io.github.rkaushikdev.kerfline.geom.Pipe;
 import io.github.rkaushikdev.kerfline.indication.Indication;
 import io.github.rkaushikdev.kerfline.indication.Measure;
 import io.github.rkaushikdev.kerfline.util.Column;
@@ -10,6 +11,7 @@ import io.github.rkaushikdev.kerfline.util.Guard;
 import io.github.rkaushikdev.kerfline.util.Num;
 import io.github.rkaushikdev.kerfline.util.Text;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -38,8 +40,10 @@ public final class Interpretation {
             Column.of("item").label("no").right(),
             Column.of("type").label("indication"),
             Column.of("at").label("at").right(),
+            Column.of("clock").label("clock").right(),
             Column.of("sizeIn").label("size in").right(),
-            Column.of("film").label("film"));
+            Column.of("film").label("film"),
+            Column.of("note").label("note"));
 
     private Interpretation() {}
 
@@ -74,6 +78,7 @@ public final class Interpretation {
                 Optional.ofNullable(input.code()),
                 Optional.ofNullable(input.technique()),
                 input.wallIn() == null ? OptionalDouble.empty() : OptionalDouble.of(input.wallIn()),
+                input.odIn() == null ? OptionalDouble.empty() : OptionalDouble.of(input.odIn()),
                 input.films(),
                 input.indications(),
                 Optional.ofNullable(input.verdict()),
@@ -104,13 +109,15 @@ public final class Interpretation {
         return new SheetCompleteness(missing, missing.isEmpty());
     }
 
-    /** The indications as rows, numbered from one in the order they sit round the weld. */
+    /**
+     * The indications as rows, numbered from one in the order they sit round the weld, with any not
+     * located sorted in at the start. On a sheet that knows the pipe size each located row says its
+     * clock position, which is what the repair crew marks on the pipe.
+     */
     public static List<IndicationRow> indicationRows(InterpretationSheet sheet) {
-        List<Indication> ordered = new ArrayList<>(sheet.indications());
-        ordered.sort((a, b) -> {
-            double difference = a.at().orElse(0) - b.at().orElse(0);
-            return difference < 0 ? -1 : difference > 0 ? 1 : 0;
-        });
+        List<Indication> ordered = sheet.indications().stream()
+                .sorted(Comparator.comparingDouble(indication -> indication.at().orElse(0)))
+                .toList();
         List<IndicationRow> rows = new ArrayList<>();
         for (int index = 0; index < ordered.size(); index++) {
             Indication indication = ordered.get(index);
@@ -118,10 +125,20 @@ public final class Interpretation {
                     index + 1,
                     indication.label(),
                     indication.at(),
+                    clockOf(indication, sheet.odIn()),
                     Num.fixed(Measure.governingSizeIn(indication), 3),
-                    indication.film().orElse("")));
+                    indication.film().orElse(""),
+                    indication.note().orElse("")));
         }
         return List.copyOf(rows);
+    }
+
+    private static Optional<String> clockOf(Indication indication, OptionalDouble odIn) {
+        if (indication.at().isEmpty() || odIn.isEmpty()) {
+            return Optional.empty();
+        }
+        double degrees = Pipe.degreesForArc(odIn.getAsDouble(), indication.at().getAsDouble());
+        return Optional.of(Pipe.clockFromDegrees(degrees));
     }
 
     private static String header(InterpretationSheet sheet) {
@@ -146,18 +163,25 @@ public final class Interpretation {
         if (rows.isEmpty()) {
             return Layout.block("FINDINGS", "No reportable indications.", WIDTH);
         }
-        List<Map<String, Object>> cells = rows.stream()
-                .map(row -> {
-                    Map<String, Object> cell = new LinkedHashMap<>();
-                    cell.put("item", row.item());
-                    cell.put("type", row.type());
-                    cell.put("at", row.at().isPresent() ? (Object) row.at().getAsDouble() : "");
-                    cell.put("sizeIn", row.sizeIn());
-                    cell.put("film", row.film());
-                    return cell;
-                })
+        List<Map<String, Object>> cells = new ArrayList<>();
+        for (IndicationRow row : rows) {
+            Map<String, Object> cell = new LinkedHashMap<>();
+            cell.put("item", row.item());
+            cell.put("type", row.type());
+            cell.put("at", row.at().isPresent() ? (Object) row.at().getAsDouble() : "");
+            cell.put("clock", row.clock().orElse(""));
+            cell.put("sizeIn", row.sizeIn());
+            cell.put("film", row.film());
+            cell.put("note", row.note());
+            cells.add(cell);
+        }
+        boolean anyClock = rows.stream().anyMatch(row -> row.clock().isPresent());
+        boolean anyNote = rows.stream().anyMatch(row -> !row.note().isEmpty());
+        List<Column> columns = FINDING_COLUMNS.stream()
+                .filter(column -> anyClock || !column.key().equals("clock"))
+                .filter(column -> anyNote || !column.key().equals("note"))
                 .toList();
-        return Layout.block("FINDINGS", Text.renderTable(cells, FINDING_COLUMNS), WIDTH);
+        return Layout.block("FINDINGS", Text.renderTable(cells, columns), WIDTH);
     }
 
     private static String disposition(InterpretationSheet sheet) {
@@ -204,20 +228,12 @@ public final class Interpretation {
 
     /** A one line summary for a register or an index of sheets. */
     public static SheetSummary summarise(InterpretationSheet sheet) {
-        int count = sheet.indications().size();
-        double worst = 0;
-        if (count > 0) {
-            worst = Double.NEGATIVE_INFINITY;
-            for (Indication indication : sheet.indications()) {
-                worst = Math.max(worst, Measure.governingSizeIn(indication));
-            }
-        }
         return new SheetSummary(
                 sheet.jointId(),
                 sheet.day(),
                 sheet.verdict().flatMap(SheetVerdict::disposition),
-                count,
-                Num.round(worst, 4),
+                sheet.indications().size(),
+                Measure.longestIn(sheet.indications()),
                 completeness(sheet).issuable());
     }
 }
