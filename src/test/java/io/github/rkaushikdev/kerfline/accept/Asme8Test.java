@@ -190,6 +190,72 @@ class Asme8Test {
     }
 
     @Nested
+    class RoundedIndications {
+
+        @Test
+        void judgesOnlyWhatIsMeasuredAcross() {
+            assertThat(Asme8.isRounded(ind("POROSITY", 0.05))).isTrue();
+            assertThat(Asme8.isRounded(ind("TUNGSTEN", 0.05))).isTrue();
+            assertThat(Asme8.isRounded(ind("SLAG", 0.05))).isFalse();
+            assertThat(Asme8.isRounded(ind("CRACK", 0.05))).isFalse();
+        }
+
+        @Test
+        void ignoresSpecksTooSmallForTheThicknessBand() {
+            assertThat(Asme8.relevantOverIn(0.1)).isCloseTo(0.01, digits(4));
+            assertThat(Asme8.relevantOverIn(0.125)).isEqualTo(1.0 / 64);
+            assertThat(Asme8.relevantOverIn(0.25)).isEqualTo(1.0 / 64);
+            assertThat(Asme8.relevantOverIn(0.5)).isEqualTo(1.0 / 32);
+            assertThat(Asme8.relevantOverIn(2)).isEqualTo(1.0 / 32);
+            assertThat(Asme8.relevantOverIn(3)).isEqualTo(1.0 / 16);
+        }
+
+        @Test
+        void allowsAPoreStandingAloneMoreThanOneWithNeighbours() {
+            assertThat(Asme8.roundedLimitIn(0.5, false)).isEqualTo(0.125);
+            assertThat(Asme8.roundedLimitIn(0.5, true)).isCloseTo(0.1667, digits(4));
+            assertThat(Asme8.roundedLimitIn(1, false)).isEqualTo(0.1563);
+            assertThat(Asme8.roundedLimitIn(1, true)).isEqualTo(0.25);
+            assertThat(Asme8.roundedLimitIn(3, true)).isEqualTo(0.375);
+        }
+
+        @Test
+        void acceptsAPoreAnInchClearOfAnyOther() {
+            assertThat(Asme8.judgeRounded(List.of(at("POROSITY", 0.14, 1), at("POROSITY", 0.05, 2.2)), 0.5))
+                    .isEmpty();
+        }
+
+        @Test
+        void holdsTheSamePoreToTheTighterLimitWithANeighbourClose() {
+            List<ClauseVerdict> verdicts =
+                    Asme8.judgeRounded(List.of(at("POROSITY", 0.14, 1), at("POROSITY", 0.05, 1.5)), 0.5);
+            assertThat(verdicts).singleElement().satisfies(verdict -> {
+                assertThat(verdict.reason()).hasValue("porosity 0.14 in across, cap is 0.125 in across");
+                assertThat(verdict.clause()).isEqualTo("Appendix 4");
+            });
+        }
+
+        @Test
+        void doesNotLetASpeckTooSmallToCountCrowdAPore() {
+            assertThat(Asme8.judgeRounded(List.of(at("POROSITY", 0.14, 1), at("POROSITY", 0.02, 1.5)), 0.5))
+                    .isEmpty();
+        }
+
+        @Test
+        void givesAPoreWithNoPositionTheTighterLimit() {
+            assertThat(Asme8.judgeRounded(List.of(ind("POROSITY", 0.14)), 0.5)).hasSize(1);
+        }
+
+        @Test
+        void failsAJointOnAnOversizePoreStandingAlone() {
+            JointVerdict result = Asme8.judgeJoint(List.of(at("POROSITY", 0.2, 3)), 0.5);
+            assertThat(result.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(result.reasons())
+                    .containsExactly("porosity standing alone 0.2 in across, cap is 0.1667 in across");
+        }
+    }
+
+    @Nested
     class JudgeJoint {
 
         @Test

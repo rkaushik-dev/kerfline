@@ -41,6 +41,8 @@ public final class Asme8 {
 
     private static final double GROUP_WINDOW_MULTIPLE = 12;
     private static final double GAP_MULTIPLE = 6;
+    private static final String ROUNDED_CLAUSE = "Appendix 4";
+    private static final double ISOLATION_IN = 1;
 
     private Asme8() {}
 
@@ -112,18 +114,84 @@ public final class Asme8 {
         if (indication.measure() != MeasuredBy.LENGTH) {
             return Verdict.accept(CODE, CLAUSE);
         }
-        double limit = elongatedLimitIn(thicknessIn);
-        double size = Measure.governingSizeIn(indication);
-        if (size <= limit) {
-            return Verdict.accept(CODE, CLAUSE + "(2)");
+        return Common.capVerdict(CapCheck.of(CODE, CLAUSE + "(2)", indication.label())
+                .size(Measure.governingSizeIn(indication))
+                .cap(elongatedLimitIn(thicknessIn))
+                .units("in long")
+                .indication(indication));
+    }
+
+    /** True for what Appendix 4 judges: an indication measured across rather than along. */
+    public static boolean isRounded(Indication indication) {
+        return !indication.planar() && indication.measure() == MeasuredBy.DIAMETER;
+    }
+
+    /**
+     * The size a rounded indication has to exceed before Appendix 4 counts it at all, banded on the
+     * thickness: a tenth of it under an eighth of an inch, then 1/64, 1/32 and 1/16 in.
+     */
+    public static double relevantOverIn(double thicknessIn) {
+        Guard.requireAbove(thicknessIn, 0, "weld thickness");
+        if (thicknessIn < 0.125) {
+            return Num.round(thicknessIn / 10, 4);
         }
-        return Verdict.makeVerdict(
-                Disposition.REPAIR,
-                CODE,
-                CLAUSE + "(2)",
-                indication.label() + " " + Num.text(Num.round(size, 3)) + " in long, cap is " + Num.text(limit) + " in",
-                indication,
-                size);
+        if (thicknessIn <= 0.25) {
+            return 1.0 / 64;
+        }
+        return thicknessIn <= 2 ? 1.0 / 32 : 1.0 / 16;
+    }
+
+    /**
+     * The largest rounded indication Appendix 4 accepts. One standing alone, with an inch or more of
+     * clear weld to its nearest neighbour, is allowed a third of the thickness up to a quarter inch,
+     * or three eighths on work over two inches; any other is held to a quarter of the thickness up to
+     * five thirty seconds.
+     */
+    public static double roundedLimitIn(double thicknessIn, boolean isolated) {
+        Guard.requireAbove(thicknessIn, 0, "weld thickness");
+        if (!isolated) {
+            return Num.round(Math.min(thicknessIn / 4, 5.0 / 32), 4);
+        }
+        return thicknessIn > 2 ? 0.375 : Num.round(Math.min(thicknessIn / 3, 0.25), 4);
+    }
+
+    /** The rounded indications Appendix 4 counts, the ones too small to matter left out. */
+    public static List<Indication> relevantRounded(List<Indication> indications, double thicknessIn) {
+        Guard.requireArray(indications, "indications");
+        double over = relevantOverIn(thicknessIn);
+        return indications.stream()
+                .filter(Asme8::isRounded)
+                .filter(indication -> Measure.governingSizeIn(indication) > over)
+                .toList();
+    }
+
+    /**
+     * Every relevant rounded indication against its size limit. Whether one stands alone is read
+     * from the clear weld to its nearest relevant neighbour either side; one with no position cannot
+     * be shown to stand alone and gets the tighter limit.
+     */
+    public static List<ClauseVerdict> judgeRounded(List<Indication> indications, double thicknessIn) {
+        List<Indication> relevant = relevantRounded(indications, thicknessIn);
+        List<Indication> placed = Measure.alongTheWeld(relevant);
+        List<ClauseVerdict> verdicts = new ArrayList<>();
+        for (Indication indication : relevant) {
+            int i = placed.indexOf(indication);
+            boolean isolated = i >= 0
+                    && (i == 0 || Measure.gapIn(placed.get(i - 1), indication) >= ISOLATION_IN)
+                    && (i == placed.size() - 1 || Measure.gapIn(indication, placed.get(i + 1)) >= ISOLATION_IN);
+            ClauseVerdict verdict = Common.capVerdict(CapCheck.of(
+                            CODE,
+                            ROUNDED_CLAUSE,
+                            isolated ? indication.label() + " standing alone" : indication.label())
+                    .size(Measure.governingSizeIn(indication))
+                    .cap(roundedLimitIn(thicknessIn, isolated))
+                    .units("in across")
+                    .indication(indication));
+            if (!Verdict.isAcceptable(verdict)) {
+                verdicts.add(verdict);
+            }
+        }
+        return List.copyOf(verdicts);
     }
 
     /**
@@ -156,7 +224,10 @@ public final class Asme8 {
         return List.copyOf(verdicts);
     }
 
-    /** Judge a whole joint: each indication on its own, then the aligned groups of the volumetric ones. */
+    /**
+     * Judge a whole joint: each indication on its own, then the aligned groups of the volumetric ones,
+     * then the rounded ones under Appendix 4.
+     */
     public static JointVerdict judgeJoint(List<Indication> indications, double thicknessIn) {
         Guard.requireArray(indications, "indications");
         Guard.requireAbove(thicknessIn, 0, "weld thickness");
@@ -166,6 +237,7 @@ public final class Asme8 {
         }
         verdicts.addAll(judgeGroups(
                 indications.stream().filter(indication -> !indication.planar()).toList(), thicknessIn));
+        verdicts.addAll(judgeRounded(indications, thicknessIn));
         return Common.settle(verdicts, CODE, CLAUSE);
     }
 }
