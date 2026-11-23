@@ -45,8 +45,8 @@ import java.util.OptionalDouble;
  * the commands testable without a filesystem, and it is why a command can be run twice and give
  * the same answer both times.
  *
- * <p>An indication is written on the command line as {@code type:size:position}, which is short
- * enough to type under a truck and unambiguous enough to parse.
+ * <p>An indication is written on the command line as {@code type:size:position:note}, with the last
+ * two optional, which is short enough to type under a truck and unambiguous enough to parse.
  */
 public final class Commands {
 
@@ -87,6 +87,18 @@ public final class Commands {
             option(OptionSpec.named("wall").kind(OptionKind.NUMBER)),
             option(OptionSpec.named("service").fallback("normal")),
             option(OptionSpec.named("loading").fallback("static")),
+            option(OptionSpec.named("weld-length")
+                    .kind(OptionKind.NUMBER)
+                    .describe("weld length when it is not the whole circumference")),
+            option(OptionSpec.named("reinforcement")
+                    .kind(OptionKind.NUMBER)
+                    .describe("cap height Section VIII reads past")),
+            option(OptionSpec.named("mating-wall")
+                    .kind(OptionKind.NUMBER)
+                    .describe("wall of the component on the other side")),
+            option(OptionSpec.named("crack-repairs")
+                    .kind(OptionKind.BOOLEAN)
+                    .describe("the company lets a short crack be repaired")),
             option(OptionSpec.named("all").kind(OptionKind.BOOLEAN).describe("run every code")));
 
     private static final List<OptionDef> SOURCE_OPTIONS = List.of(
@@ -99,6 +111,8 @@ public final class Commands {
                     .kind(OptionKind.NUMBER)
                     .fallback(90.0)
                     .describe("days to project")));
+
+    private static final String INDICATION_SHAPE = "type:size:position:note";
 
     private static final Map<String, CliCommand> COMMANDS = commands();
 
@@ -161,32 +175,56 @@ public final class Commands {
 
     /**
      * Read {@code "SLAG:0.5:3"} into an indication: a type, the size measured on the film, and
-     * optionally the position along the weld.
+     * optionally the position along the weld and the reader's note. The note is how the acceptance
+     * rules hear about isolated slag, high-low and crater cracks, so {@code "SLAG:0.3:4:isolated"}
+     * and, with no position, {@code "IP:1.5::high-low"} both read.
      *
      * @throws BadInputException when the text is not in that shape, a part is not a number, or the
      *     type is not one anybody reports
      */
     public static Indication parseIndication(String text) {
         if (text == null) {
-            throw new BadInputException("an indication is written as type:size:position", Details.of("got", null));
+            throw new BadInputException("an indication is written as " + INDICATION_SHAPE, Details.of("got", null));
         }
         List<String> parts = Text.split(text, ":");
-        if (parts.size() < 2 || parts.size() > 3) {
-            throw new BadInputException("cannot read " + text + " as type:size:position", Details.of("text", text));
+        if (parts.size() < 2 || parts.size() > 4) {
+            throw new BadInputException("cannot read " + text + " as " + INDICATION_SHAPE, Details.of("text", text));
         }
-        double measuredIn = Num.parse(parts.get(1));
-        if (!Double.isFinite(measuredIn)) {
-            throw new BadInputException(parts.get(1) + " is not a size", Details.of("text", text));
+        IndicationInput input = IndicationInput.of(parts.get(0), number(text, parts.get(1), "a size"));
+        if (parts.size() > 2 && !parts.get(2).isBlank()) {
+            input = input.at(number(text, parts.get(2), "a position"));
         }
-        IndicationInput input = IndicationInput.of(parts.get(0), measuredIn);
-        if (parts.size() == 3) {
-            double at = Num.parse(parts.get(2));
-            if (!Double.isFinite(at)) {
-                throw new BadInputException(parts.get(2) + " is not a position", Details.of("text", text));
-            }
-            input = input.at(at);
+        if (parts.size() > 3 && !parts.get(3).isBlank()) {
+            input = input.note(Text.trim(parts.get(3)));
         }
         return Measure.makeIndication(input);
+    }
+
+    private static double number(String text, String part, String what) {
+        double value = Num.parse(part);
+        if (!Double.isFinite(value)) {
+            throw new BadInputException(
+                    "cannot read " + text + ", " + part + " is not " + what, Details.of("text", text));
+        }
+        return value;
+    }
+
+    /** What the judge command hands the engine beyond the joint, from whatever options were given. */
+    static JudgeOptions judgeOptions(ParsedArgs options) {
+        JudgeOptions context = JudgeOptions.NONE
+                .service(options.text("service").orElse(null))
+                .loading(options.text("loading").orElse(null))
+                .crackRepairs(options.flag("crack-repairs"));
+        if (options.number("weld-length").isPresent()) {
+            context = context.weldLengthIn(options.number("weld-length").getAsDouble());
+        }
+        if (options.number("reinforcement").isPresent()) {
+            context = context.reinforcementIn(options.number("reinforcement").getAsDouble());
+        }
+        if (options.number("mating-wall").isPresent()) {
+            context = context.matingWallIn(options.number("mating-wall").getAsDouble());
+        }
+        return context;
     }
 
     private static CommandResult technique(ParsedArgs options) {
@@ -211,9 +249,7 @@ public final class Commands {
         Joint joint = jointFrom(options);
         List<Indication> indications =
                 options.positionals().stream().map(Commands::parseIndication).toList();
-        JudgeOptions context = JudgeOptions.NONE
-                .service(options.text("service").orElse(null))
-                .loading(options.text("loading").orElse(null));
+        JudgeOptions context = judgeOptions(options);
 
         if (options.flag("all")) {
             List<CodeRun> results = Engine.judgeAll(indications, joint, context);

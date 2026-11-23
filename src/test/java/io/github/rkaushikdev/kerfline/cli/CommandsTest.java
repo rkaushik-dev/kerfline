@@ -3,6 +3,7 @@ package io.github.rkaushikdev.kerfline.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.rkaushikdev.kerfline.accept.JudgeOptions;
 import io.github.rkaushikdev.kerfline.indication.Indication;
 import io.github.rkaushikdev.kerfline.indication.IndicationType;
 import java.util.ArrayList;
@@ -50,6 +51,29 @@ class CommandsTest {
             assertThatThrownBy(() -> Commands.parseIndication("SLAG:big")).hasMessageContaining("is not a size");
             assertThatThrownBy(() -> Commands.parseIndication("SLAG:0.5:top"))
                     .hasMessageContaining("is not a position");
+        }
+
+        @Test
+        void readsTheReadersNoteAfterThePosition() {
+            Indication isolated = Commands.parseIndication("SLAG:0.3:4:isolated");
+            assertThat(isolated.note()).hasValue("isolated");
+            assertThat(isolated.at()).hasValue(4);
+        }
+
+        @Test
+        void takesANoteWithNoPosition() {
+            Indication highLow = Commands.parseIndication("IP:1.5::high-low");
+            assertThat(highLow.at()).isEmpty();
+            assertThat(highLow.note()).hasValue("high-low");
+            assertThat(Commands.parseIndication("IP:1.5:2:").note()).isEmpty();
+        }
+
+        @Test
+        void refusesMoreThanFourParts() {
+            assertThatThrownBy(() -> Commands.parseIndication("SLAG:0.3:4:isolated:x"))
+                    .hasMessage("cannot read SLAG:0.3:4:isolated:x as type:size:position:note");
+            assertThatThrownBy(() -> Commands.parseIndication("SLAG:big"))
+                    .hasMessage("cannot read SLAG:big, big is not a size");
         }
 
         @Test
@@ -190,6 +214,69 @@ class CommandsTest {
                     Commands.runCommand("judge", with(base, "--code", "B31.3", "--service", "category_d", "IP:0.5:2"));
             assertThat(normal.code()).isEqualTo(1);
             assertThat(light.code()).isZero();
+        }
+    }
+
+    @Nested
+    class JudgeOptionsFromTheCommandLine {
+
+        private final List<String> base = List.of("--joint", "J-118", "--size", "6", "--schedule", "40");
+
+        @Test
+        void reachesTheIsolatedSlagRuleThroughTheNote() {
+            List<String> five = List.of(
+                    "SLAG:0.05:1:isolated",
+                    "SLAG:0.05:2:isolated",
+                    "SLAG:0.05:3:isolated",
+                    "SLAG:0.05:4:isolated",
+                    "SLAG:0.05:5:isolated");
+            CommandResult result = Commands.runCommand("judge", with(base, five.toArray(String[]::new)));
+            assertThat(result.code()).isEqualTo(1);
+            assertThat(result.text()).contains("5 isolated slag inclusions in 12 in, cap is 4");
+        }
+
+        @Test
+        void repairsAShortCrackOnlyWhenTheCompanySaysSo() {
+            assertThat(Commands.runCommand("judge", with(base, "CRACK:1:4")).text())
+                    .contains("REJECT");
+            CommandResult authorised = Commands.runCommand("judge", with(base, "--crack-repairs", "CRACK:1:4"));
+            assertThat(authorised.text()).contains("REPAIR").contains("repairable on the company's authority");
+        }
+
+        @Test
+        void takesAShorterWeldLengthThroughToTheCode() {
+            // 0.9 in of IP is under any cap on the full joint and over 8 percent of a 7.5 in weld.
+            assertThat(Commands.runCommand("judge", with(base, "IP:0.9:1")).code())
+                    .isZero();
+            CommandResult partial = Commands.runCommand("judge", with(base, "--weld-length", "7.5", "IP:0.9:1"));
+            assertThat(partial.code()).isEqualTo(1);
+            assertThat(partial.text()).contains("percent of a weld under 12 in");
+        }
+
+        @Test
+        void mapsEveryOptionOntoTheEngine() {
+            ParsedArgs parsed = Args.parseArgs(
+                    List.of(
+                            "--weld-length",
+                            "30",
+                            "--reinforcement",
+                            "0.06",
+                            "--mating-wall",
+                            "0.5",
+                            "--crack-repairs",
+                            "--service",
+                            "category_d"),
+                    Commands.command("judge").options());
+            JudgeOptions options = Commands.judgeOptions(parsed);
+            assertThat(options.weldLengthIn()).isEqualTo(30);
+            assertThat(options.reinforcementIn()).isEqualTo(0.06);
+            assertThat(options.matingWallIn()).isEqualTo(0.5);
+            assertThat(options.crackRepairs()).isTrue();
+            assertThat(options.service()).isEqualTo("category_d");
+            JudgeOptions bare = Commands.judgeOptions(
+                    Args.parseArgs(List.of(), Commands.command("judge").options()));
+            assertThat(bare.weldLengthIn()).isNull();
+            assertThat(bare.crackRepairs()).isFalse();
         }
     }
 
