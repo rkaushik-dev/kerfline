@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.OptionalInt;
 
 /**
  * The source inventory, the utilisation log, the leak test and the quarterly physical inventory.
@@ -133,44 +132,13 @@ public final class SourceLog {
     public static LeakTestStatus leakTestCurrent(List<LeakTest> tests, String serial, String day) {
         Guard.requireArray(tests, "leak tests");
         Dates.requireDay(day, "date");
-        Optional<LeakTest> latest = latestOnOrBefore(
+        Optional<LeakTest> latest = PeriodicCheck.latestOnOrBefore(
                 tests.stream()
                         .filter(test -> Objects.equals(test.serial(), serial))
                         .toList(),
                 day);
-        Optional<String> lapsed = lapsed(latest, day, "leak test");
-        return new LeakTestStatus(lapsed.isEmpty(), lapsed, latest, daysLeft(latest, lapsed, day));
-    }
-
-    private static <T extends PeriodicCheck> Optional<T> latestOnOrBefore(List<T> checks, String day) {
-        T latest = null;
-        for (T check : checks) {
-            if (Dates.daysBetween(check.day(), day) >= 0
-                    && (latest == null || check.day().compareTo(latest.day()) >= 0)) {
-                latest = check;
-            }
-        }
-        return Optional.ofNullable(latest);
-    }
-
-    /** Why a check does not hold on a day, or nothing when it does. */
-    private static Optional<String> lapsed(Optional<? extends PeriodicCheck> latest, String day, String what) {
-        if (latest.isEmpty()) {
-            return Optional.of("no " + what + " on file");
-        }
-        if (!latest.get().pass()) {
-            return Optional.of("the last " + what + " failed");
-        }
-        if (day.compareTo(latest.get().dueBy()) > 0) {
-            return Optional.of("the " + what + " has run out");
-        }
-        return Optional.empty();
-    }
-
-    private static OptionalInt daysLeft(Optional<? extends PeriodicCheck> latest, Optional<String> lapsed, String day) {
-        return lapsed.isPresent()
-                ? OptionalInt.empty()
-                : OptionalInt.of(Dates.daysBetween(day, latest.orElseThrow().dueBy()));
+        Optional<String> lapsed = PeriodicCheck.lapsed(latest, day, "leak test");
+        return new LeakTestStatus(lapsed.isEmpty(), lapsed, latest, PeriodicCheck.daysLeft(latest, lapsed, day));
     }
 
     /**
@@ -203,9 +171,9 @@ public final class SourceLog {
     public static InventoryStatus inventoryCurrent(List<PhysicalInventory> inventories, String day) {
         Guard.requireArray(inventories, "inventories");
         Dates.requireDay(day, "date");
-        Optional<PhysicalInventory> latest = latestOnOrBefore(inventories, day);
-        Optional<String> lapsed = lapsed(latest, day, "physical inventory");
-        return new InventoryStatus(lapsed.isEmpty(), lapsed, latest, daysLeft(latest, lapsed, day));
+        Optional<PhysicalInventory> latest = PeriodicCheck.latestOnOrBefore(inventories, day);
+        Optional<String> lapsed = PeriodicCheck.lapsed(latest, day, "physical inventory");
+        return new InventoryStatus(lapsed.isEmpty(), lapsed, latest, PeriodicCheck.daysLeft(latest, lapsed, day));
     }
 
     /**

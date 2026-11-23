@@ -233,4 +233,65 @@ class SurveyTest {
             assertThat(Survey.missingSurveys(List.of())).containsExactly("boundary", "perimeter", "retraction");
         }
     }
+
+    @Nested
+    class MeterCalibrations {
+
+        private final MeterCalibration good = Survey.makeCalibration("Ludlum 3", "2025-01-10", 0.12, "Atlas Cal");
+
+        @Test
+        void passesAMeterWithinTwentyPercentAndHoldsItForSixMonths() {
+            assertThat(good.pass()).isTrue();
+            assertThat(good.dueBy()).isEqualTo("2025-07-10");
+            assertThat(good.laboratory()).hasValue("Atlas Cal");
+            assertThat(Survey.calibrationIntervalMonths()).isEqualTo(6);
+            assertThat(Survey.makeCalibration("Ludlum 3", "2025-01-10", 0.2, null)
+                            .pass())
+                    .isTrue();
+            assertThat(Survey.makeCalibration("Ludlum 3", "2025-01-10", 0.21, null)
+                            .pass())
+                    .isFalse();
+        }
+
+        @Test
+        void saysWhetherTheMeterIsInCalibrationOnTheDay() {
+            CalibrationStatus inside = Survey.meterCurrent(List.of(good), "Ludlum 3", "2025-03-14");
+            assertThat(inside.current()).isTrue();
+            assertThat(inside.daysLeft()).hasValue(118);
+            assertThat(Survey.meterCurrent(List.of(good), "Ludlum 3", "2025-07-11")
+                            .reason())
+                    .hasValue("the calibration has run out");
+            assertThat(Survey.meterCurrent(List.of(good), "Ludlum 9", "2025-03-14")
+                            .reason())
+                    .hasValue("no calibration on file");
+        }
+
+        @Test
+        void neverLetsAFailedCalibrationComeGoodByWaiting() {
+            MeterCalibration failed = Survey.makeCalibration("Ludlum 3", "2025-02-01", 0.3, null);
+            CalibrationStatus status = Survey.meterCurrent(List.of(good, failed), "Ludlum 3", "2025-03-14");
+            assertThat(status.current()).isFalse();
+            assertThat(status.reason()).hasValue("the last calibration failed");
+            assertThat(status.latest()).hasValue(failed);
+        }
+
+        @Test
+        void countsASurveyOnlyWhenItsMeterWasInCalibration() {
+            List<SurveyRecord> done = Survey.surveyKinds().stream()
+                    .map(kind -> survey(kind, List.of(at(1, 1))))
+                    .toList();
+            assertThat(Survey.missingSurveys(done, List.of(good))).isEmpty();
+            assertThat(Survey.missingSurveys(done, List.of())).containsExactly("boundary", "perimeter", "retraction");
+            MeterCalibration late = Survey.makeCalibration("Ludlum 3", "2025-03-15", 0.05, null);
+            assertThat(Survey.missingSurveys(done, List.of(late))).hasSize(3);
+        }
+
+        @Test
+        void refusesACalibrationWithNoMeterOrANegativeError() {
+            assertThatThrownBy(() -> Survey.makeCalibration(" ", "2025-01-10", 0.1, null))
+                    .hasMessageContaining("names the meter");
+            assertThatThrownBy(() -> Survey.makeCalibration("Ludlum 3", "2025-01-10", -0.1, null))
+                    .hasMessageContaining("calibration error");
+        }
+    }
 }

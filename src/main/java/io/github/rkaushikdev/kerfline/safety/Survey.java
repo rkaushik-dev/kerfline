@@ -5,10 +5,10 @@ import io.github.rkaushikdev.kerfline.errors.Details;
 import io.github.rkaushikdev.kerfline.util.Dates;
 import io.github.rkaushikdev.kerfline.util.Guard;
 import io.github.rkaushikdev.kerfline.util.Num;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Survey records.
@@ -22,6 +22,9 @@ import java.util.Set;
  * finished, and the only thing that says otherwise is the meter held against the camera as the
  * crew walks back in. So a retraction survey with no reading is not a missing record here, it is a
  * refusal.
+ *
+ * <p>The meter has to be in calibration for any of it to count. Calibration is six monthly and a
+ * meter reading more than twenty percent off the true rate at any check point fails.
  */
 public final class Survey {
 
@@ -29,6 +32,8 @@ public final class Survey {
     private static final double DEFAULT_BACKGROUND_MR = 0.02;
     private static final double DEFAULT_THRESHOLD_MR = 2;
     private static final double BACKGROUND_MULTIPLE = 5;
+    private static final int CALIBRATION_MONTHS = 6;
+    private static final double CALIBRATION_TOLERANCE = 0.2;
 
     private Survey() {}
 
@@ -174,8 +179,54 @@ public final class Survey {
     /** The surveys a shot needs that are not on file, in the order they are taken. */
     public static List<String> missingSurveys(List<SurveyRecord> surveys) {
         Guard.requireArray(surveys, "surveys");
-        Set<String> present = new HashSet<>();
-        surveys.forEach(survey -> present.add(survey.kind()));
+        Set<String> present = surveys.stream().map(SurveyRecord::kind).collect(Collectors.toSet());
         return KINDS.stream().filter(kind -> !present.contains(kind)).toList();
+    }
+
+    /**
+     * The surveys a shot needs that are not on file or were taken with a meter out of calibration on
+     * the day. A reading off a meter nobody can vouch for is not a survey, however good it looks.
+     */
+    public static List<String> missingSurveys(List<SurveyRecord> surveys, List<MeterCalibration> calibrations) {
+        Guard.requireArray(surveys, "surveys");
+        return missingSurveys(surveys.stream()
+                .filter(survey -> meterCurrent(calibrations, survey.instrument(), survey.day())
+                        .current())
+                .toList());
+    }
+
+    public static int calibrationIntervalMonths() {
+        return CALIBRATION_MONTHS;
+    }
+
+    /**
+     * A survey meter calibration. It passes when every check point read within twenty percent of the
+     * true rate, and the next one falls due six months on. The laboratory may be null.
+     */
+    public static MeterCalibration makeCalibration(
+            String instrument, String day, double worstError, String laboratory) {
+        String meter = Guard.requireLabel(instrument, "a calibration names the meter it was made on");
+        Dates.requireDay(day, "calibration date");
+        Guard.requireAtLeast(worstError, 0, "calibration error");
+        return new MeterCalibration(
+                meter,
+                day,
+                Num.round(worstError, 3),
+                Optional.ofNullable(laboratory),
+                worstError <= CALIBRATION_TOLERANCE,
+                Dates.addMonths(day, CALIBRATION_MONTHS));
+    }
+
+    /** Whether a meter is in calibration on a day, on the rules every {@link PeriodicCheck} lapses by. */
+    public static CalibrationStatus meterCurrent(List<MeterCalibration> calibrations, String instrument, String day) {
+        Guard.requireArray(calibrations, "calibrations");
+        Dates.requireDay(day, "date");
+        Optional<MeterCalibration> latest = PeriodicCheck.latestOnOrBefore(
+                calibrations.stream()
+                        .filter(calibration -> calibration.instrument().equals(instrument))
+                        .toList(),
+                day);
+        Optional<String> lapsed = PeriodicCheck.lapsed(latest, day, "calibration");
+        return new CalibrationStatus(lapsed.isEmpty(), lapsed, latest, PeriodicCheck.daysLeft(latest, lapsed, day));
     }
 }
