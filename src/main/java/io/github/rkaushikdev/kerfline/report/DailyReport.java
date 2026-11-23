@@ -8,8 +8,9 @@ import java.util.Optional;
 
 /**
  * One crew's day: the journal entries dated that day counted by kind, the joints shot in register
- * order, the films exposed, the readings, and the survey check. {@code complete} is true when no
- * source went out or all three surveys are on file for the day.
+ * order, the films exposed, the readings, and the survey check: the meters found out of
+ * calibration when the calibrations were checked, and {@code complete}, true when no source went
+ * out or all three surveys are on file for the day off meters that were in calibration.
  */
 public record DailyReport(
         Optional<String> job,
@@ -23,6 +24,7 @@ public record DailyReport(
         List<DailyVerdict> verdicts,
         List<String> surveysDone,
         List<String> surveysMissing,
+        List<String> metersOutOfCalibration,
         boolean complete) {
 
     public DailyReport {
@@ -32,5 +34,6 @@ public record DailyReport(
         verdicts = List.copyOf(verdicts);
         surveysDone = List.copyOf(surveysDone);
         surveysMissing = List.copyOf(surveysMissing);
+        metersOutOfCalibration = List.copyOf(metersOutOfCalibration);
     }
 }

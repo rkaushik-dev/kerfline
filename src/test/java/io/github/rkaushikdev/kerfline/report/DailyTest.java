@@ -4,6 +4,7 @@ import static io.github.rkaushikdev.kerfline.testing.Close.digits;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.rkaushikdev.kerfline.safety.MeterCalibration;
 import io.github.rkaushikdev.kerfline.safety.Survey;
 import io.github.rkaushikdev.kerfline.safety.SurveyRecord;
 import io.github.rkaushikdev.kerfline.store.EntryDraft;
@@ -247,6 +248,71 @@ class DailyTest {
         void leavesOutDaysWhenNoSourceWentOut() {
             DailyReport quiet = Daily.buildDaily(on("2025-03-16").source(null).build());
             assertThat(Daily.daysMissingSurveys(List.of(quiet))).isEmpty();
+        }
+    }
+
+    @Nested
+    class TheMetersTheSurveysWereTakenOn {
+
+        private final MeterCalibration current = Survey.makeCalibration("Ludlum 3", "2025-01-10", 0.1, null);
+        private final MeterCalibration lapsed = Survey.makeCalibration("Ludlum 3", "2024-08-01", 0.1, null);
+
+        @Test
+        void acceptsSurveysOffAMeterInCalibration() {
+            DailyReport report = Daily.buildDaily(on("2025-03-14")
+                    .surveys(ALL_SURVEYS)
+                    .source("IR-7741")
+                    .calibrations(List.of(current))
+                    .build());
+            assertThat(report.complete()).isTrue();
+            assertThat(report.metersOutOfCalibration()).isEmpty();
+        }
+
+        @Test
+        void countsNoSurveyOffAMeterWhoseCalibrationRanOut() {
+            DailyReport report = Daily.buildDaily(on("2025-03-14")
+                    .surveys(ALL_SURVEYS)
+                    .source("IR-7741")
+                    .calibrations(List.of(lapsed))
+                    .build());
+            assertThat(report.complete()).isFalse();
+            assertThat(report.surveysMissing()).containsExactly("boundary", "perimeter", "retraction");
+            assertThat(report.metersOutOfCalibration()).containsExactly("Ludlum 3");
+            assertThat(report.surveysDone()).hasSize(3);
+        }
+
+        @Test
+        void saysWhichMeterWasOutOnThePrintedReport() {
+            DailyReport report = Daily.buildDaily(on("2025-03-14")
+                    .surveys(ALL_SURVEYS)
+                    .source("IR-7741")
+                    .calibrations(List.of(lapsed))
+                    .build());
+            String text = Daily.renderDaily(report);
+            assertThat(text).contains("MISSING SURVEYS: boundary, perimeter, retraction");
+            assertThat(text).contains("Meter out of calibration: Ludlum 3");
+        }
+
+        @Test
+        void leavesTheMetersAloneWhenNoCalibrationsWereBrought() {
+            DailyRequest request =
+                    on("2025-03-14").surveys(ALL_SURVEYS).source("IR-7741").build();
+            assertThat(request.calibrations()).isNull();
+            DailyReport report = Daily.buildDaily(request);
+            assertThat(report.complete()).isTrue();
+            assertThat(report.metersOutOfCalibration()).isEmpty();
+            assertThat(request.toBuilder().calibrations(List.of(lapsed)).build().calibrations())
+                    .containsExactly(lapsed);
+        }
+
+        @Test
+        void namesAMeterOutEvenOnADayNoSourceWentOut() {
+            DailyReport report = Daily.buildDaily(on("2025-03-14")
+                    .surveys(ALL_SURVEYS)
+                    .calibrations(List.of(lapsed))
+                    .build());
+            assertThat(report.complete()).isTrue();
+            assertThat(report.metersOutOfCalibration()).containsExactly("Ludlum 3");
         }
     }
 }

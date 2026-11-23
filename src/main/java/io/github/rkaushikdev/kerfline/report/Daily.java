@@ -13,6 +13,7 @@ import io.github.rkaushikdev.kerfline.util.Ids;
 import io.github.rkaushikdev.kerfline.util.Num;
 import io.github.rkaushikdev.kerfline.util.Rate;
 import io.github.rkaushikdev.kerfline.util.Text;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -34,6 +35,9 @@ import java.util.Set;
 public final class Daily {
 
     private static final int WIDTH = Layout.pageWidth();
+
+    private static final List<Column> READING_COLUMNS =
+            List.of(Column.of("joint").label("joint"), Column.of("disposition").label("result"));
 
     private Daily() {}
 
@@ -62,7 +66,22 @@ public final class Daily {
 
         List<SurveyRecord> today =
                 surveys.stream().filter(survey -> day.equals(survey.day())).toList();
-        List<String> outstanding = request.source() == null ? List.of() : Survey.missingSurveys(today);
+        List<String> outOfCalibration = request.calibrations() == null
+                ? List.of()
+                : today.stream()
+                        .map(SurveyRecord::instrument)
+                        .distinct()
+                        .filter(meter -> !Survey.meterCurrent(request.calibrations(), meter, day)
+                                .current())
+                        .toList();
+        List<String> outstanding;
+        if (request.source() == null) {
+            outstanding = List.of();
+        } else {
+            outstanding = request.calibrations() == null
+                    ? Survey.missingSurveys(today)
+                    : Survey.missingSurveys(today, request.calibrations());
+        }
 
         Set<String> shotSubjects = new LinkedHashSet<>();
         shot.forEach(entry -> shotSubjects.add(entry.subject()));
@@ -81,6 +100,7 @@ public final class Daily {
                         .toList(),
                 today.stream().map(SurveyRecord::kind).toList(),
                 outstanding,
+                outOfCalibration,
                 outstanding.isEmpty());
     }
 
@@ -110,52 +130,41 @@ public final class Daily {
                         Text.pair("Crew", String.join(", ", report.crew())),
                         Text.pair("Source", report.source().orElse("none out"))));
 
-        String work = String.join(
-                "\n",
+        String work = Layout.block(
                 "WORK",
-                Text.rule(WIDTH),
                 Text.keyValueBlock(List.of(
                         Text.pair("Joints shot", String.valueOf(totals.joints())),
                         Text.pair("Films exposed", Num.text(totals.films())),
                         Text.pair("Joints read", String.valueOf(totals.read())),
                         Text.pair("Accepted", String.valueOf(totals.accepted())),
-                        Text.pair("Repaired or cut out", String.valueOf(totals.repaired())))));
+                        Text.pair("Repaired or cut out", String.valueOf(totals.repaired())))),
+                WIDTH);
 
-        String readings;
-        if (report.verdicts().isEmpty()) {
-            readings = Layout.block("READINGS", "Nothing read today.", WIDTH);
-        } else {
-            List<Map<String, Object>> rows = report.verdicts().stream()
-                    .map(row -> {
-                        Map<String, Object> cells = new LinkedHashMap<>();
-                        cells.put("joint", row.joint());
-                        cells.put("disposition", row.disposition().orElse(null));
-                        return cells;
-                    })
-                    .toList();
-            readings = String.join(
-                    "\n",
-                    "READINGS",
-                    Text.rule(WIDTH),
-                    Text.renderTable(
-                            rows,
-                            List.of(
-                                    Column.of("joint").label("joint"),
-                                    Column.of("disposition").label("result"))));
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (DailyVerdict row : report.verdicts()) {
+            Map<String, Object> cells = new LinkedHashMap<>();
+            cells.put("joint", row.joint());
+            cells.put("disposition", row.disposition().orElse(null));
+            rows.add(cells);
         }
+        String readings = Layout.block(
+                "READINGS", rows.isEmpty() ? "Nothing read today." : Text.renderTable(rows, READING_COLUMNS), WIDTH);
 
-        String safety = String.join("\n", "SAFETY", Text.rule(WIDTH), safetyLine(report));
-        return Layout.page(List.of(head, work, readings, safety));
+        return Layout.page(List.of(head, work, readings, Layout.block("SAFETY", safetyLines(report), WIDTH)));
     }
 
-    private static String safetyLine(DailyReport report) {
+    /** The survey check, and below it any meter the surveys were taken on that was out of calibration. */
+    private static String safetyLines(DailyReport report) {
+        List<String> lines = new ArrayList<>();
         if (report.source().isEmpty()) {
-            return "No source left the store.";
+            lines.add("No source left the store.");
+        } else if (report.complete()) {
+            lines.add("Surveys complete: " + String.join(", ", report.surveysDone()));
+        } else {
+            lines.add("MISSING SURVEYS: " + String.join(", ", report.surveysMissing()));
         }
-        if (report.complete()) {
-            return "Surveys complete: " + String.join(", ", report.surveysDone());
-        }
-        return "MISSING SURVEYS: " + String.join(", ", report.surveysMissing());
+        report.metersOutOfCalibration().forEach(meter -> lines.add("Meter out of calibration: " + meter));
+        return String.join("\n", lines);
     }
 
     /** Days in a span where a source went out and the surveys are short. */
