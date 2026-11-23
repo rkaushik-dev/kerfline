@@ -1,5 +1,8 @@
 package io.github.rkaushikdev.kerfline.cli;
 
+import io.github.rkaushikdev.kerfline.accept.Api1104;
+import io.github.rkaushikdev.kerfline.accept.Api1104Rule;
+import io.github.rkaushikdev.kerfline.accept.Asme8;
 import io.github.rkaushikdev.kerfline.density.DensityLimits;
 import io.github.rkaushikdev.kerfline.density.Limits;
 import io.github.rkaushikdev.kerfline.errors.Details;
@@ -17,6 +20,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -56,112 +60,139 @@ public final class Tables {
                 "wire", new ReferenceTable("the wire ladder and the set each wire is drawn from", Tables::wireTable));
         tables.put(
                 "schedule", new ReferenceTable("pipe outside diameters and wall thicknesses", Tables::scheduleTable));
+        tables.put("api1104", new ReferenceTable("API 1104 length caps by imperfection", Tables::api1104Table));
+        tables.put(
+                "rounded",
+                new ReferenceTable("Section VIII Appendix 4 rounded indication limits", Tables::roundedTable));
         return Collections.unmodifiableMap(tables);
     }
 
-    private static Map<String, Object> row(Object... keysAndValues) {
-        Map<String, Object> row = new LinkedHashMap<>();
-        for (int i = 0; i < keysAndValues.length; i += 2) {
-            row.put((String) keysAndValues[i], keysAndValues[i + 1]);
+    /** One column of a printed table: its heading, whether it sits right, and what a row puts in it. */
+    private record Field<T>(String heading, boolean right, Function<T, Object> value) {}
+
+    private static <T> Field<T> left(String heading, Function<T, Object> value) {
+        return new Field<>(heading, false, value);
+    }
+
+    private static <T> Field<T> right(String heading, Function<T, Object> value) {
+        return new Field<>(heading, true, value);
+    }
+
+    /** Print rows under the fields, each field reading its own cell off the row. */
+    private static <T> String print(List<T> rows, List<Field<T>> fields) {
+        List<Column> columns = new ArrayList<>();
+        for (int i = 0; i < fields.size(); i++) {
+            Column column = Column.of("c" + i).label(fields.get(i).heading());
+            columns.add(fields.get(i).right() ? column.right() : column);
         }
-        return row;
+        List<Map<String, Object>> cells = new ArrayList<>();
+        for (T row : rows) {
+            Map<String, Object> cell = new LinkedHashMap<>();
+            for (int i = 0; i < fields.size(); i++) {
+                cell.put("c" + i, fields.get(i).value().apply(row));
+            }
+            cells.add(cell);
+        }
+        return Text.renderTable(cells, columns);
     }
 
     private static String unsharpnessTable() {
-        List<Map<String, Object>> rows = Unsharpness.unsharpnessBands().stream()
-                .map(band -> row(
-                        "over", Num.fixed(band.over(), 2),
-                        "upTo", band.upTo() == Double.POSITIVE_INFINITY ? "and above" : Num.fixed(band.upTo(), 2),
-                        "limit", Num.fixed(band.limitIn(), 3)))
-                .toList();
-        return Text.renderTable(
-                rows,
+        return print(
+                Unsharpness.unsharpnessBands(),
                 List.of(
-                        Column.of("over").label("over in").right(),
-                        Column.of("upTo").label("through in").right(),
-                        Column.of("limit").label("Ug limit in").right()));
+                        right("over in", band -> Num.fixed(band.over(), 2)),
+                        right(
+                                "through in",
+                                band -> band.upTo() == Double.POSITIVE_INFINITY
+                                        ? "and above"
+                                        : Num.fixed(band.upTo(), 2)),
+                        right("Ug limit in", band -> Num.fixed(band.limitIn(), 3))));
     }
 
     private static String iqiTable() {
-        List<Map<String, Object>> rows = Selection.selectionTable().stream()
-                .map(band -> row(
-                        "over", Num.fixed(band.over(), 3),
-                        "upTo", Num.fixed(band.upTo(), 3),
-                        "sourceHole", band.source().hole(),
-                        "sourceWire", band.source().wire(),
-                        "filmHole", band.film().hole(),
-                        "filmWire", band.film().wire()))
-                .toList();
-        return Text.renderTable(
-                        rows,
+        return print(
+                        Selection.selectionTable(),
                         List.of(
-                                Column.of("over").label("over in").right(),
-                                Column.of("upTo").label("through in").right(),
-                                Column.of("sourceHole").label("src hole").right(),
-                                Column.of("sourceWire").label("src wire").right(),
-                                Column.of("filmHole").label("film hole").right(),
-                                Column.of("filmWire").label("film wire").right()))
+                                right("over in", band -> Num.fixed(band.over(), 3)),
+                                right("through in", band -> Num.fixed(band.upTo(), 3)),
+                                right("src hole", band -> band.source().hole()),
+                                right("src wire", band -> band.source().wire()),
+                                right("film hole", band -> band.film().hole()),
+                                right("film wire", band -> band.film().wire())))
                 + "\n\nThe essential hole is " + Selection.essentialHole() + " throughout.";
     }
 
     private static String densityTable() {
-        List<Map<String, Object>> rows = new ArrayList<>();
+        List<DensityLimits> rows = new ArrayList<>();
         for (SourceKind kind : Limits.sourceKinds()) {
-            for (boolean composite : new boolean[] {false, true}) {
-                DensityLimits limits = Limits.densityLimits(kind, composite);
-                rows.add(row(
-                        "source", kind.label(),
-                        "viewing", composite ? "composite, each film" : "single film",
-                        "minimum", Num.fixed(limits.minimum(), 1),
-                        "maximum", Num.fixed(limits.maximum(), 1)));
-            }
+            rows.add(Limits.densityLimits(kind, false));
+            rows.add(Limits.densityLimits(kind, true));
         }
-        return Text.renderTable(
+        return print(
                 rows,
                 List.of(
-                        Column.of("source").label("source"),
-                        Column.of("viewing").label("viewing"),
-                        Column.of("minimum").label("minimum").right(),
-                        Column.of("maximum").label("maximum").right()));
+                        left("source", limits -> limits.kind().label()),
+                        left("viewing", limits -> limits.composite() ? "composite, each film" : "single film"),
+                        right("minimum", limits -> Num.fixed(limits.minimum(), 1)),
+                        right("maximum", limits -> Num.fixed(limits.maximum(), 1))));
     }
 
     private static String wireTable() {
-        List<Map<String, Object>> rows = Wire.wireNumbers().stream()
-                .map(number -> row(
-                        "number", number,
-                        "diameter", Num.fixed(Wire.wireDiameterIn(number), 4),
-                        "set", Wire.preferredSetForWire(number)))
-                .toList();
-        return Text.renderTable(
-                rows,
+        return print(
+                Wire.wireNumbers(),
                 List.of(
-                        Column.of("number").label("wire").right(),
-                        Column.of("diameter").label("diameter in").right(),
-                        Column.of("set").label("set")));
+                        right("wire", number -> number),
+                        right("diameter in", number -> Num.fixed(Wire.wireDiameterIn(number), 4)),
+                        left("set", Wire::preferredSetForWire)));
     }
 
+    private record SizeAndSchedule(String size, String schedule) {}
+
     private static String scheduleTable() {
-        List<Map<String, Object>> rows = new ArrayList<>();
+        List<SizeAndSchedule> rows = new ArrayList<>();
         for (String size : Schedule.nominalSizes()) {
-            for (String schedule : Schedule.schedulesFor(size)) {
-                rows.add(row(
-                        "size",
-                        size,
-                        "od",
-                        Num.fixed(Schedule.outsideDiameterIn(size), 3),
-                        "schedule",
-                        schedule,
-                        "wall",
-                        Num.fixed(Schedule.wallThicknessIn(size, schedule), 3)));
-            }
+            Schedule.schedulesFor(size).forEach(schedule -> rows.add(new SizeAndSchedule(size, schedule)));
         }
-        return Text.renderTable(
+        return print(
                 rows,
                 List.of(
-                        Column.of("size").label("NPS"),
-                        Column.of("od").label("OD in").right(),
-                        Column.of("schedule").label("sch"),
-                        Column.of("wall").label("wall in").right()));
+                        left("NPS", SizeAndSchedule::size),
+                        right("OD in", row -> Num.fixed(Schedule.outsideDiameterIn(row.size()), 3)),
+                        left("sch", SizeAndSchedule::schedule),
+                        right("wall in", row -> Num.fixed(Schedule.wallThicknessIn(row.size(), row.schedule()), 3))));
+    }
+
+    private static String api1104Table() {
+        return print(
+                        Api1104.lengthRules(),
+                        List.of(
+                                left("imperfection", Api1104Rule::label),
+                                left("clause", Api1104Rule::clause),
+                                right("single in", rule -> Num.text(rule.singleIn())),
+                                right("in 12 in", rule -> Num.text(rule.windowIn())),
+                                left("against the weld", Tables::againstTheWeld)))
+                + "\n\nEvery imperfection but high-low and undercut also counts toward 2 in in any 12 in"
+                + "\nand 8 percent of the weld.";
+    }
+
+    private static String againstTheWeld(Api1104Rule rule) {
+        if (rule.wholeWeldFraction().isPresent()) {
+            return Num.text(Num.round(rule.wholeWeldFraction().getAsDouble() * 100, 1)) + " percent of any weld";
+        }
+        if (rule.percent().isPresent()) {
+            return Num.text(rule.percent().getAsDouble() * 100) + " percent under 12 in";
+        }
+        return "";
+    }
+
+    private static String roundedTable() {
+        return print(
+                List.of(0.1, 0.125, 0.25, 0.5, 0.75, 1.0, 2.0, 3.0),
+                List.of(
+                        right("t in", t -> Num.fixed(t, 3)),
+                        right("counts over in", t -> Num.fixed(Asme8.relevantOverIn(t), 4)),
+                        right("largest in", t -> Num.fixed(Asme8.roundedLimitIn(t, false), 4)),
+                        right("alone in", t -> Num.fixed(Asme8.roundedLimitIn(t, true), 4))));
     }
 
     /** The tables the command can print, in the order it lists them. */

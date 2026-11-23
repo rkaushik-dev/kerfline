@@ -3,6 +3,8 @@ package io.github.rkaushikdev.kerfline.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.rkaushikdev.kerfline.accept.Api1104;
+import io.github.rkaushikdev.kerfline.accept.Asme8;
 import io.github.rkaushikdev.kerfline.geom.Unsharpness;
 import io.github.rkaushikdev.kerfline.joint.Schedule;
 import io.github.rkaushikdev.kerfline.util.Num;
@@ -17,7 +19,8 @@ class TablesTest {
 
         @Test
         void offersTheTablesATechnicianAsksFor() {
-            assertThat(Tables.tableNames()).containsExactly("unsharpness", "iqi", "density", "wire", "schedule");
+            assertThat(Tables.tableNames())
+                    .containsExactly("unsharpness", "iqi", "density", "wire", "schedule", "api1104", "rounded");
         }
 
         @Test
@@ -85,6 +88,37 @@ class TablesTest {
         void printsARowForEverySizeAndSchedulePairing() {
             String[] lines = Tables.renderReferenceTable("schedule").split("\n");
             assertThat(lines.length).isGreaterThan(60);
+        }
+    }
+
+    @Nested
+    class TheCodeTables {
+
+        @Test
+        void printsEveryApi1104LengthRuleWithItsCaps() {
+            String text = Tables.renderReferenceTable("api1104");
+            assertThat(text.split("\n")).hasSize(2 + Api1104.lengthRules().size() + 3);
+            assertThat(text).containsPattern("incomplete penetration due to high-low +9\\.3\\.2 +2 +3");
+            assertThat(text).containsPattern("incomplete fusion +9\\.3\\.4 +1 +1 +8 percent under 12 in");
+            assertThat(text).containsPattern("hollow bead +9\\.3\\.7 +0\\.5 +2 +8 percent of any weld");
+            assertThat(text).containsPattern("undercut +9\\.3\\.8 +2 +2 +16\\.7 percent of any weld");
+            assertThat(text).contains("8 percent of the weld.");
+        }
+
+        @Test
+        void printsTheAppendixFourLimitsAcrossTheThicknessBands() {
+            String text = Tables.renderReferenceTable("rounded");
+            assertThat(text).contains("counts over in");
+            assertThat(text).containsPattern("0\\.500 +0\\.0313 +0\\.1250 +0\\.1667");
+            assertThat(text).containsPattern("3\\.000 +0\\.0625 +0\\.1563 +0\\.3750");
+            assertThat(text.split("\n")).hasSize(10);
+        }
+
+        @Test
+        void readsTheNumbersFromTheCodesRatherThanACopy() {
+            String text = Tables.renderReferenceTable("rounded");
+            assertThat(text).contains(Num.fixed(Asme8.roundedLimitIn(0.25, true), 4));
+            assertThat(Tables.tableDescribe("api1104")).contains("API 1104");
         }
     }
 
