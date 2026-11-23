@@ -19,18 +19,19 @@ import java.util.OptionalDouble;
  *
  * <p>The shape of this code is worth understanding before reading the numbers. Almost every defect
  * is capped three ways at once: the length of any single one, the total in any twelve inches of
- * weld, and a percentage of the whole weld length. A joint can pass the first two and fail the
- * third, and on a small diameter joint the third is the one that bites, because twelve inches is
- * most of the way round a two inch pipe.
+ * weld, and against the weld length itself. On a weld under twelve inches long, which is anything
+ * on two inch pipe, the twelve inch window is the whole weld, and the code adds an eight percent
+ * ceiling for exactly that case. Undercut is capped at a sixth of the weld whatever its length.
  *
- * <p>The percentage cap is what makes this code different from the pressure vessel ones, and it is
- * why the weld length is a required argument here rather than an optional extra.
+ * <p>The caps on weld length are what make this code different from the pressure vessel ones, and
+ * they are why the weld length is a required argument here rather than an optional extra.
  */
 public final class Api1104 {
 
     private static final String CODE = "API1104";
     private static final double WINDOW_IN = 12;
     private static final double PERCENT_CAP = 0.08;
+    private static final double UNDERCUT_FRACTION = 1.0 / 6;
 
     /** In the order the code lists them, which is the order aggregate findings are reported in. */
     private static final Map<IndicationType, Api1104Rule> RULES = rules();
@@ -44,15 +45,17 @@ public final class Api1104 {
     private Api1104() {}
 
     private static Map<IndicationType, Api1104Rule> rules() {
-        OptionalDouble percent = OptionalDouble.of(PERCENT_CAP);
+        OptionalDouble shortWeld = OptionalDouble.of(PERCENT_CAP);
         OptionalDouble none = OptionalDouble.empty();
         Map<IndicationType, Api1104Rule> rules = new LinkedHashMap<>();
-        rules.put(IndicationType.IP, new Api1104Rule("9.3.2", 1, 1, percent, "incomplete penetration"));
-        rules.put(IndicationType.IF, new Api1104Rule("9.3.4", 1, 1, percent, "incomplete fusion"));
-        rules.put(IndicationType.SLAG, new Api1104Rule("9.3.6", 2, 2, none, "slag inclusion"));
-        rules.put(IndicationType.HOLLOW_BEAD, new Api1104Rule("9.3.7", 0.5, 2, none, "hollow bead"));
-        rules.put(IndicationType.BURN_THROUGH, new Api1104Rule("9.3.5", 0.25, 0.5, none, "burn through"));
-        rules.put(IndicationType.UNDERCUT, new Api1104Rule("9.3.8", 2, 2, percent, "undercut"));
+        rules.put(IndicationType.IP, new Api1104Rule("9.3.2", 1, 1, shortWeld, none, "incomplete penetration"));
+        rules.put(IndicationType.IF, new Api1104Rule("9.3.4", 1, 1, shortWeld, none, "incomplete fusion"));
+        rules.put(IndicationType.SLAG, new Api1104Rule("9.3.6", 2, 2, none, none, "slag inclusion"));
+        rules.put(IndicationType.HOLLOW_BEAD, new Api1104Rule("9.3.7", 0.5, 2, none, none, "hollow bead"));
+        rules.put(IndicationType.BURN_THROUGH, new Api1104Rule("9.3.5", 0.25, 0.5, none, none, "burn through"));
+        rules.put(
+                IndicationType.UNDERCUT,
+                new Api1104Rule("9.3.8", 2, 2, none, OptionalDouble.of(UNDERCUT_FRACTION), "undercut"));
         return Collections.unmodifiableMap(rules);
     }
 
@@ -213,7 +216,7 @@ public final class Api1104 {
                     inWindow));
         }
 
-        if (rule.percent().isPresent()) {
+        if (rule.percent().isPresent() && weldLengthIn < WINDOW_IN) {
             double percent = rule.percent().getAsDouble();
             double cap = Num.round(weldLengthIn * percent, 4);
             if (total > cap) {
@@ -222,7 +225,20 @@ public final class Api1104 {
                         CODE,
                         rule.clause(),
                         rule.label() + " totals " + Num.text(Num.round(total, 3)) + " in, over "
-                                + Num.text(percent * 100) + " percent of the weld",
+                                + Num.text(percent * 100) + " percent of a weld under " + Num.text(WINDOW_IN) + " in",
+                        total));
+            }
+        }
+
+        if (rule.wholeWeldFraction().isPresent()) {
+            double cap = Num.round(weldLengthIn * rule.wholeWeldFraction().getAsDouble(), 4);
+            if (total > cap) {
+                verdicts.add(Verdict.makeVerdict(
+                        Disposition.REPAIR,
+                        CODE,
+                        rule.clause(),
+                        rule.label() + " totals " + Num.text(Num.round(total, 3)) + " in, over " + Num.text(cap)
+                                + " in allowed in a " + Num.text(Num.round(weldLengthIn, 3)) + " in weld",
                         total));
             }
         }

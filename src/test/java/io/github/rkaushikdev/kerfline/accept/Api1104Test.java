@@ -2,6 +2,7 @@ package io.github.rkaushikdev.kerfline.accept;
 
 import static io.github.rkaushikdev.kerfline.accept.Indications.at;
 import static io.github.rkaushikdev.kerfline.accept.Indications.ind;
+import static io.github.rkaushikdev.kerfline.testing.Close.digits;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -244,6 +245,47 @@ class Api1104Test {
                     List.of(at("IP", 0.4, 19.5), at("IP", 0.4, 20.3), at("IP", 0.4, 0.2), at("IP", 0.4, 0.9));
             List<ClauseVerdict> verdicts = Api1104.judgeAggregate(set, IndicationType.IP, 60);
             assertThat(verdicts).noneMatch(v -> v.reason().orElseThrow().contains("in 12 in"));
+        }
+
+        @Test
+        void saysTheEightPercentCapIsTheShortWeldOne() {
+            List<Indication> set = List.of(at("IP", 0.9, 0));
+            ClauseVerdict verdict =
+                    Api1104.judgeAggregate(set, IndicationType.IP, 7.5).get(0);
+            assertThat(verdict.reason().orElseThrow())
+                    .isEqualTo("incomplete penetration totals 0.9 in, over 8 percent of a weld under 12 in");
+            assertThat(verdict.measured()).hasValue(0.9);
+        }
+
+        @Test
+        void leavesTheEightPercentCapOffAWeldOfTwelveInchesOrMore() {
+            // Three inches of IP is over 8 percent of a 36 in weld, but no foot of it holds more than one.
+            List<Indication> set = List.of(at("IP", 1, 0), at("IP", 1, 12), at("IP", 1, 24));
+            assertThat(Api1104.judgeAggregate(set, IndicationType.IP, 36)).isEmpty();
+            assertThat(Api1104.judgeAggregate(set, IndicationType.IF, 36)).isEmpty();
+        }
+
+        @Test
+        void capsUndercutAtASixthOfTheWeldRatherThanEightPercent() {
+            Api1104Rule rule = Api1104.ruleFor(IndicationType.UNDERCUT).orElseThrow();
+            assertThat(rule.percent()).isEmpty();
+            assertThat(rule.wholeWeldFraction().orElseThrow()).isCloseTo(1.0 / 6, digits(6));
+            // A sixth of 7.5 in is 1.25 in, where eight percent would have been 0.6 in.
+            assertThat(Api1104.judgeAggregate(List.of(at("UNDERCUT", 1, 0)), IndicationType.UNDERCUT, 7.5))
+                    .isEmpty();
+            List<ClauseVerdict> over =
+                    Api1104.judgeAggregate(List.of(at("UNDERCUT", 1.5, 0)), IndicationType.UNDERCUT, 7.5);
+            assertThat(over).singleElement().satisfies(verdict -> assertThat(
+                            verdict.reason().orElseThrow())
+                    .isEqualTo("undercut totals 1.5 in, over 1.25 in allowed in a 7.5 in weld"));
+        }
+
+        @Test
+        void holdsTheSixthOnALongWeldToo() {
+            // 3.6 in of undercut is over a sixth of a 20.8 in weld, which is 3.4667 in.
+            List<Indication> set = List.of(at("UNDERCUT", 1.8, 0), at("UNDERCUT", 1.8, 10.4));
+            List<ClauseVerdict> verdicts = Api1104.judgeAggregate(set, IndicationType.UNDERCUT, 20.8);
+            assertThat(verdicts).anyMatch(v -> v.reason().orElseThrow().contains("over 3.4667 in allowed"));
         }
 
         @Test
