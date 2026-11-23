@@ -16,8 +16,8 @@ import java.util.OptionalDouble;
  *
  * <p>The service the line is in changes the criteria, so nothing here can be evaluated without
  * knowing it. Severe cyclic service tightens the undercut limit and Category D loosens incomplete
- * penetration from "never" to "within a limit", which is the largest single difference between any
- * two columns of that table.
+ * penetration from "never" to an inch and a half in any six inches of weld, which is the largest
+ * single difference between any two columns of that table.
  *
  * <p>Almost every limit is a fraction of Tw, the thickness of the thinner of the two components
  * joined. That includes the window the cumulative limit is measured over, which is twelve Tw rather
@@ -34,9 +34,12 @@ public final class AsmeB313 {
     private static final List<String> SERVICES = List.of("normal", "severe_cyclic", "category_d");
 
     private static final Map<String, AsmeB313Rules> RULES = Map.of(
-            "normal", new AsmeB313Rules(0.0625, 0.25, false, OptionalDouble.empty(), 0.25),
-            "severe_cyclic", new AsmeB313Rules(0.03125, 0.25, false, OptionalDouble.empty(), 0.2),
-            "category_d", new AsmeB313Rules(0.0625, 0.25, true, OptionalDouble.of(1.5), 0.25));
+            "normal", new AsmeB313Rules(0.0625, 0.25, OptionalDouble.empty(), 0.25),
+            "severe_cyclic", new AsmeB313Rules(0.03125, 0.25, OptionalDouble.empty(), 0.2),
+            "category_d", new AsmeB313Rules(0.0625, 0.25, OptionalDouble.of(1.5), 0.25));
+
+    /** The run of weld Category D reads its incomplete penetration allowance over. */
+    private static final double PENETRATION_WINDOW_IN = 6;
 
     private static final double INCLUSION_FRACTION = 1.0 / 3;
     private static final double INCLUSION_WIDTH_IN = 0.098;
@@ -81,8 +84,12 @@ public final class AsmeB313 {
         return Num.round(Math.min(rules.undercutIn(), thinnerWallIn * rules.undercutFraction()), 4);
     }
 
-    private static ClauseVerdict repair(Indication indication, String reason, double measured) {
-        return Verdict.makeVerdict(Disposition.REPAIR, CODE, CLAUSE, reason, indication, measured);
+    private static CapCheck check(Indication indication, String what, double sizeIn, double capIn, String units) {
+        return CapCheck.of(CODE, CLAUSE, what)
+                .size(sizeIn)
+                .cap(capIn)
+                .units(units)
+                .indication(indication);
     }
 
     /** One indication under the column for the service the line runs in. */
@@ -94,8 +101,13 @@ public final class AsmeB313 {
         return switch (indication.type()) {
             case CRACK, IF -> Common.rejectPlanar(CODE, CLAUSE, indication);
             case IP ->
-                rules.penetrationPermitted()
-                        ? Verdict.accept(CODE, CLAUSE)
+                rules.penetrationIn().isPresent()
+                        ? Common.capVerdict(check(
+                                indication,
+                                "incomplete penetration",
+                                size,
+                                rules.penetrationIn().getAsDouble(),
+                                "in long"))
                         : Verdict.makeVerdict(
                                 Disposition.REJECT,
                                 CODE,
@@ -104,45 +116,53 @@ public final class AsmeB313 {
                                 indication,
                                 size);
             case SLAG, TUNGSTEN -> judgeInclusion(indication, size, inclusionLimits(thinnerWallIn));
-            case UNDERCUT -> {
-                double limit = undercutLimitIn(service, thinnerWallIn);
-                yield size > limit
-                        ? repair(
-                                indication,
-                                "undercut " + Num.text(Num.round(size, 4)) + " in, cap is " + Num.text(limit) + " in",
-                                size)
-                        : Verdict.accept(CODE, CLAUSE);
-            }
-            case POROSITY, CLUSTER -> {
-                double cap = Num.round(thinnerWallIn * rules.poreFraction(), 4);
-                yield size > cap
-                        ? repair(
-                                indication,
-                                "pore " + Num.text(Num.round(size, 4)) + " in across, cap is " + Num.text(cap) + " in",
-                                size)
-                        : Verdict.accept(CODE, CLAUSE);
-            }
+            case UNDERCUT ->
+                Common.capVerdict(check(indication, "undercut", size, undercutLimitIn(service, thinnerWallIn), "in"));
+            case POROSITY, CLUSTER ->
+                Common.capVerdict(check(
+                        indication, "pore", size, Num.round(thinnerWallIn * rules.poreFraction(), 4), "in across"));
             default -> Verdict.accept(CODE, CLAUSE);
         };
     }
 
     private static ClauseVerdict judgeInclusion(Indication indication, double size, InclusionLimits limits) {
-        if (indication.widthIn().isPresent() && indication.widthIn().getAsDouble() > limits.widthIn()) {
-            double width = indication.widthIn().getAsDouble();
-            return repair(
-                    indication,
-                    "inclusion " + Num.text(Num.round(width, 4)) + " in wide, cap is " + Num.text(limits.widthIn())
-                            + " in",
-                    width);
+        if (indication.widthIn().isPresent()) {
+            ClauseVerdict byWidth = Common.capVerdict(
+                    check(indication, "inclusion", indication.widthIn().getAsDouble(), limits.widthIn(), "in wide"));
+            if (!Verdict.isAcceptable(byWidth)) {
+                return byWidth;
+            }
         }
-        if (size > limits.lengthIn()) {
-            return repair(
-                    indication,
-                    "inclusion " + Num.text(Num.round(size, 4)) + " in long, cap is " + Num.text(limits.lengthIn())
-                            + " in",
-                    size);
+        return Common.capVerdict(check(indication, "inclusion", size, limits.lengthIn(), "in long"));
+    }
+
+    /**
+     * The Category D allowance on incomplete penetration, read as a total in any six inches of weld.
+     * A column that permits none has nothing to total, because every such indication has already
+     * been rejected on its own.
+     */
+    public static List<ClauseVerdict> judgePenetration(List<Indication> indications, String service) {
+        AsmeB313Rules rules = rulesFor(service);
+        Guard.requireArray(indications, "indications");
+        List<Indication> penetration = indications.stream()
+                .filter(indication -> indication.type() == IndicationType.IP)
+                .toList();
+        if (rules.penetrationIn().isEmpty() || penetration.isEmpty()) {
+            return List.of();
         }
-        return Verdict.accept(CODE, CLAUSE);
+        double window = Measure.worstWindow(penetration, PENETRATION_WINDOW_IN).totalIn();
+        double total = window > 0 ? window : Measure.cumulativeLengthIn(penetration);
+        double cap = rules.penetrationIn().getAsDouble();
+        if (total <= cap) {
+            return List.of();
+        }
+        return List.of(Verdict.makeVerdict(
+                Disposition.REPAIR,
+                CODE,
+                CLAUSE,
+                "incomplete penetration totals " + Num.text(Num.round(total, 4)) + " in in "
+                        + Num.text(PENETRATION_WINDOW_IN) + " in of weld, cap is " + Num.text(cap) + " in",
+                total));
     }
 
     private static boolean isInclusion(Indication indication) {
@@ -178,7 +198,10 @@ public final class AsmeB313 {
         return judgeJoint(indications, thinnerWallIn, DEFAULT_SERVICE);
     }
 
-    /** Judge a whole joint: each indication under the service column, then the cumulative inclusions. */
+    /**
+     * Judge a whole joint: each indication under the service column, then the cumulative inclusions,
+     * then whatever incomplete penetration the column allows.
+     */
     public static JointVerdict judgeJoint(List<Indication> indications, double thinnerWallIn, String service) {
         Guard.requireArray(indications, "indications");
         Guard.requireOneOf(service, SERVICES, "fluid service");
@@ -188,6 +211,7 @@ public final class AsmeB313 {
             verdicts.add(judgeOne(indication, service, thinnerWallIn));
         }
         verdicts.addAll(judgeCumulative(indications, thinnerWallIn));
+        verdicts.addAll(judgePenetration(indications, service));
         return Common.settle(verdicts, CODE, CLAUSE);
     }
 }

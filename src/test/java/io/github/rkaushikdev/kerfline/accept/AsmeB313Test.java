@@ -227,4 +227,69 @@ class AsmeB313Test {
                     .hasMessageContaining("fluid service");
         }
     }
+
+    @Nested
+    class CategoryDPenetration {
+
+        @Test
+        void allowsAnInchAndAHalfOnlyInCategoryD() {
+            assertThat(AsmeB313.rulesFor("category_d").penetrationIn()).hasValue(1.5);
+            assertThat(AsmeB313.rulesFor("category_d").penetrationPermitted()).isTrue();
+            assertThat(AsmeB313.rulesFor("normal").penetrationIn()).isEmpty();
+            assertThat(AsmeB313.rulesFor("severe_cyclic").penetrationPermitted())
+                    .isFalse();
+        }
+
+        @Test
+        void capsASingleRunOfPenetrationAtTheAllowance() {
+            ClauseVerdict verdict = AsmeB313.judgeOne(ind("IP", 2), "category_d", 0.5);
+            assertThat(verdict.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(verdict.reason()).hasValue("incomplete penetration 2 in long, cap is 1.5 in long");
+            assertThat(AsmeB313.judgeOne(ind("IP", 1.5), "category_d", 0.5).disposition())
+                    .isEqualTo(Disposition.ACCEPT);
+        }
+
+        @Test
+        void totalsThePenetrationInAnySixInches() {
+            List<ClauseVerdict> verdicts =
+                    AsmeB313.judgePenetration(List.of(at("IP", 0.8, 0), at("IP", 0.8, 4)), "category_d");
+            assertThat(verdicts).singleElement().satisfies(verdict -> {
+                assertThat(verdict.reason())
+                        .hasValue("incomplete penetration totals 1.6 in in 6 in of weld, cap is 1.5 in");
+                assertThat(verdict.measured()).hasValue(1.6);
+            });
+            assertThat(AsmeB313.judgePenetration(List.of(at("IP", 0.8, 0), at("IP", 0.8, 7)), "category_d"))
+                    .isEmpty();
+        }
+
+        @Test
+        void totalsUnplacedPenetrationAcrossTheWeld() {
+            assertThat(AsmeB313.judgePenetration(List.of(ind("IP", 0.8), ind("IP", 0.8)), "category_d"))
+                    .hasSize(1);
+        }
+
+        @Test
+        void hasNothingToTotalWhereNoneIsAllowed() {
+            assertThat(AsmeB313.judgePenetration(List.of(at("IP", 0.8, 0), at("IP", 0.8, 4)), "normal"))
+                    .isEmpty();
+            assertThat(AsmeB313.judgePenetration(List.of(at("SLAG", 0.8, 0)), "category_d"))
+                    .isEmpty();
+        }
+
+        @Test
+        void sendsACategoryDJointForRepairOnTheTotal() {
+            JointVerdict result = AsmeB313.judgeJoint(List.of(at("IP", 0.8, 0), at("IP", 0.8, 4)), 0.5, "category_d");
+            assertThat(result.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(result.reasons()).singleElement().asString().contains("in 6 in of weld");
+        }
+
+        @Test
+        void saysWhichWayAnInclusionWasTooBig() {
+            assertThat(AsmeB313.judgeOne(ind("SLAG", 0.1, input -> input.widthIn(0.12)), "normal", 0.5)
+                            .reason())
+                    .hasValue("inclusion 0.12 in wide, cap is 0.098 in wide");
+            assertThat(AsmeB313.judgeOne(ind("SLAG", 0.2), "normal", 0.5).reason())
+                    .hasValue("inclusion 0.2 in long, cap is 0.1667 in long");
+        }
+    }
 }
