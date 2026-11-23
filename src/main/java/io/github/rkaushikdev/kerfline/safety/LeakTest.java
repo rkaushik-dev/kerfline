@@ -15,7 +15,8 @@ public record LeakTest(
         Optional<String> laboratory,
         boolean pass,
         String dueBy,
-        Optional<String> action) {
+        Optional<String> action)
+        implements PeriodicCheck {
 
     public LeakTest {
         Objects.requireNonNull(laboratory, "laboratory");

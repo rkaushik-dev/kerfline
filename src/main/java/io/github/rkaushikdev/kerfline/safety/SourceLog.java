@@ -15,7 +15,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
- * The source inventory, the utilisation log and the leak test.
+ * The source inventory, the utilisation log, the leak test and the quarterly physical inventory.
  *
  * <p>Every sealed source in the shop is on this list from the day it arrives to the day it is
  * shipped back, and the log has to be able to say where it was on any given day in between. That
@@ -24,12 +24,13 @@ import java.util.OptionalInt;
  *
  * <p>The leak test is six monthly and the threshold is five nanocuries of removable contamination.
  * A source over that comes out of service the same day, and there is no margin and no supervisor
- * override on that number.
+ * override on that number. The physical inventory is quarterly and lapses the same way.
  */
 public final class SourceLog {
 
     private static final double LEAK_LIMIT_UCI = 0.005;
     private static final int LEAK_INTERVAL_MONTHS = 6;
+    private static final int INVENTORY_INTERVAL_MONTHS = 3;
 
     private SourceLog() {}
 
@@ -126,37 +127,85 @@ public final class SourceLog {
     }
 
     /**
-     * Whether a source may be used on a day. Only tests taken on or before that day count, and the
-     * latest of them decides; when two share a day the one listed last is taken. A failed test
-     * never becomes current again by waiting, and a test that has run out is the same answer as
-     * never having had one.
+     * Whether a source may be used on a day, on the rules every {@link PeriodicCheck} lapses by;
+     * when two tests share a day the one listed last is taken.
      */
     public static LeakTestStatus leakTestCurrent(List<LeakTest> tests, String serial, String day) {
         Guard.requireArray(tests, "leak tests");
         Dates.requireDay(day, "date");
-        LeakTest latest = null;
-        for (LeakTest test : tests) {
-            if (Objects.equals(test.serial(), serial)
-                    && Dates.daysBetween(test.day(), day) >= 0
-                    && (latest == null || test.day().compareTo(latest.day()) >= 0)) {
-                latest = test;
-            }
-        }
-        if (latest == null) {
-            return notCurrent("no leak test on file", Optional.empty());
-        }
-        if (!latest.pass()) {
-            return notCurrent("the last leak test failed", Optional.of(latest));
-        }
-        if (day.compareTo(latest.dueBy()) > 0) {
-            return notCurrent("the leak test has run out", Optional.of(latest));
-        }
-        return new LeakTestStatus(
-                true, Optional.empty(), Optional.of(latest), OptionalInt.of(Dates.daysBetween(day, latest.dueBy())));
+        Optional<LeakTest> latest = latestOnOrBefore(
+                tests.stream()
+                        .filter(test -> Objects.equals(test.serial(), serial))
+                        .toList(),
+                day);
+        Optional<String> lapsed = lapsed(latest, day, "leak test");
+        return new LeakTestStatus(lapsed.isEmpty(), lapsed, latest, daysLeft(latest, lapsed, day));
     }
 
-    private static LeakTestStatus notCurrent(String reason, Optional<LeakTest> latest) {
-        return new LeakTestStatus(false, Optional.of(reason), latest, OptionalInt.empty());
+    private static <T extends PeriodicCheck> Optional<T> latestOnOrBefore(List<T> checks, String day) {
+        T latest = null;
+        for (T check : checks) {
+            if (Dates.daysBetween(check.day(), day) >= 0
+                    && (latest == null || check.day().compareTo(latest.day()) >= 0)) {
+                latest = check;
+            }
+        }
+        return Optional.ofNullable(latest);
+    }
+
+    /** Why a check does not hold on a day, or nothing when it does. */
+    private static Optional<String> lapsed(Optional<? extends PeriodicCheck> latest, String day, String what) {
+        if (latest.isEmpty()) {
+            return Optional.of("no " + what + " on file");
+        }
+        if (!latest.get().pass()) {
+            return Optional.of("the last " + what + " failed");
+        }
+        if (day.compareTo(latest.get().dueBy()) > 0) {
+            return Optional.of("the " + what + " has run out");
+        }
+        return Optional.empty();
+    }
+
+    private static OptionalInt daysLeft(Optional<? extends PeriodicCheck> latest, Optional<String> lapsed, String day) {
+        return lapsed.isPresent()
+                ? OptionalInt.empty()
+                : OptionalInt.of(Dates.daysBetween(day, latest.orElseThrow().dueBy()));
+    }
+
+    /**
+     * A physical inventory of the sources. Every source on the books has to be sighted for it to
+     * pass, and one that was not is a lost source that is reported by telephone the same day. The
+     * next inventory falls due three months on. The serials sighted are matched as written.
+     */
+    public static PhysicalInventory makeInventory(
+            String day, String takenBy, List<SealedSource> onTheBooks, List<String> sighted) {
+        Dates.requireDay(day, "inventory date");
+        String who = Guard.requireLabel(takenBy, "an inventory names who took it");
+        Guard.requireArray(onTheBooks, "sources on the books");
+        Guard.requireArray(sighted, "sources sighted");
+        List<String> missing = onTheBooks.stream()
+                .map(SealedSource::serial)
+                .filter(serial -> !sighted.contains(serial))
+                .toList();
+        return new PhysicalInventory(
+                day, who, sighted, missing, missing.isEmpty(), Dates.addMonths(day, INVENTORY_INTERVAL_MONTHS));
+    }
+
+    public static int inventoryIntervalMonths() {
+        return INVENTORY_INTERVAL_MONTHS;
+    }
+
+    /**
+     * Whether the source inventory is current on a day. An inventory that left a source unaccounted
+     * for is a failed one, and it stays failed until a later inventory finds everything.
+     */
+    public static InventoryStatus inventoryCurrent(List<PhysicalInventory> inventories, String day) {
+        Guard.requireArray(inventories, "inventories");
+        Dates.requireDay(day, "date");
+        Optional<PhysicalInventory> latest = latestOnOrBefore(inventories, day);
+        Optional<String> lapsed = lapsed(latest, day, "physical inventory");
+        return new InventoryStatus(lapsed.isEmpty(), lapsed, latest, daysLeft(latest, lapsed, day));
     }
 
     /**

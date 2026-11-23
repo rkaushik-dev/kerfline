@@ -249,4 +249,83 @@ class SourceLogTest {
             assertThat(due.get(0).reason()).contains("no leak test");
         }
     }
+
+    @Nested
+    class PhysicalInventories {
+
+        private final SealedSource second = SourceLog.makeSource("SE-0412", "SE75", 60, "2025-01-20");
+        private final List<SealedSource> books = List.of(SOURCE, second);
+
+        @Test
+        void passesWhenEverySourceOnTheBooksIsSighted() {
+            PhysicalInventory taken =
+                    SourceLog.makeInventory("2025-03-31", "R. Okafor", books, List.of("SE-0412", "IR-7741"));
+            assertThat(taken.pass()).isTrue();
+            assertThat(taken.missing()).isEmpty();
+            assertThat(taken.dueBy()).isEqualTo("2025-06-30");
+            assertThat(SourceLog.inventoryIntervalMonths()).isEqualTo(3);
+        }
+
+        @Test
+        void failsAndNamesASourceNobodySighted() {
+            PhysicalInventory taken = SourceLog.makeInventory("2025-03-31", "R. Okafor", books, List.of("IR-7741"));
+            assertThat(taken.pass()).isFalse();
+            assertThat(taken.missing()).containsExactly("SE-0412");
+        }
+
+        @Test
+        void isCurrentForThreeMonthsAndNoLonger() {
+            PhysicalInventory taken =
+                    SourceLog.makeInventory("2025-03-31", "R. Okafor", books, List.of("IR-7741", "SE-0412"));
+            InventoryStatus inside = SourceLog.inventoryCurrent(List.of(taken), "2025-06-30");
+            assertThat(inside.current()).isTrue();
+            assertThat(inside.daysLeft()).hasValue(0);
+            InventoryStatus after = SourceLog.inventoryCurrent(List.of(taken), "2025-07-01");
+            assertThat(after.current()).isFalse();
+            assertThat(after.reason()).hasValue("the physical inventory has run out");
+            assertThat(after.daysLeft()).isEmpty();
+        }
+
+        @Test
+        void staysFailedUntilALaterInventoryFindsEverything() {
+            PhysicalInventory shortCount =
+                    SourceLog.makeInventory("2025-03-31", "R. Okafor", books, List.of("IR-7741"));
+            PhysicalInventory found =
+                    SourceLog.makeInventory("2025-04-02", "R. Okafor", books, List.of("IR-7741", "SE-0412"));
+            assertThat(SourceLog.inventoryCurrent(List.of(shortCount, found), "2025-04-01")
+                            .reason())
+                    .hasValue("the last physical inventory failed");
+            InventoryStatus later = SourceLog.inventoryCurrent(List.of(shortCount, found), "2025-04-03");
+            assertThat(later.current()).isTrue();
+            assertThat(later.latest()).hasValue(found);
+        }
+
+        @Test
+        void hasNothingCurrentBeforeTheFirstInventory() {
+            PhysicalInventory taken =
+                    SourceLog.makeInventory("2025-03-31", "R. Okafor", books, List.of("IR-7741", "SE-0412"));
+            assertThat(SourceLog.inventoryCurrent(List.of(taken), "2025-03-30").reason())
+                    .hasValue("no physical inventory on file");
+            assertThat(SourceLog.inventoryCurrent(List.of(), "2025-03-30").latest())
+                    .isEmpty();
+        }
+
+        @Test
+        void refusesAnInventoryNobodyTook() {
+            assertThatThrownBy(() -> SourceLog.makeInventory("2025-03-31", " ", books, List.of()))
+                    .hasMessageContaining("who took it");
+            assertThatThrownBy(() -> SourceLog.makeInventory("2025-02-30", "R. Okafor", books, List.of()))
+                    .hasMessageContaining("inventory date");
+        }
+
+        @Test
+        void sharesTheLapseRulesWithTheLeakTest() {
+            PeriodicCheck leak = SourceLog.makeLeakTest("IR-7741", "2025-01-10", 0.001);
+            PeriodicCheck count =
+                    SourceLog.makeInventory("2025-01-10", "R. Okafor", books, List.of("IR-7741", "SE-0412"));
+            assertThat(leak.dueBy()).isEqualTo("2025-07-10");
+            assertThat(count.dueBy()).isEqualTo("2025-04-10");
+            assertThat(leak.pass()).isEqualTo(count.pass());
+        }
+    }
 }
