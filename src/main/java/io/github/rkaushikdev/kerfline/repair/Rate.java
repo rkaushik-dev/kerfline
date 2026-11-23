@@ -6,16 +6,17 @@ import static io.github.rkaushikdev.kerfline.util.Rate.rateOf;
 import io.github.rkaushikdev.kerfline.errors.BadInputException;
 import io.github.rkaushikdev.kerfline.errors.Details;
 import io.github.rkaushikdev.kerfline.util.Guard;
+import io.github.rkaushikdev.kerfline.util.Num;
 import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
+import java.util.function.Function;
+import java.util.function.ToDoubleFunction;
 
 /**
  * Welder repair rate.
@@ -35,6 +36,7 @@ public final class Rate {
     private static final double THRESHOLD = 0.1;
     private static final int MINIMUM_SAMPLE = 20;
     private static final String UNKNOWN_WELDER = "unknown";
+    private static final String ALL_WELDERS = "all";
     private static final String ACCEPT = "accept";
 
     private Rate() {}
@@ -62,10 +64,6 @@ public final class Rate {
         return counted;
     }
 
-    private static String welderOf(JointOutcome joint) {
-        return Objects.requireNonNullElse(joint.welder(), UNKNOWN_WELDER);
-    }
-
     /**
      * Repairs over joints shot, with the counts it came from. Anything not accepted counts as a
      * repair, a rejection included; a joint with no disposition has not been shot and is left out.
@@ -83,19 +81,69 @@ public final class Rate {
      * rates. Joints with no stencil are gathered under {@code unknown}.
      */
     public static List<WelderRate> welderRates(List<JointOutcome> joints) {
-        List<JointOutcome> counted = countable(joints);
-        Map<String, List<JointOutcome>> byWelder = new LinkedHashMap<>();
-        for (JointOutcome joint : counted) {
-            byWelder.computeIfAbsent(welderOf(joint), welder -> new ArrayList<>())
-                    .add(joint);
-        }
-        Collator collator = Collator.getInstance(Locale.ROOT);
-        return byWelder.entrySet().stream()
+        return byWelder(countable(joints), JointOutcome::welder).entrySet().stream()
                 .map(entry -> WelderRate.of(entry.getKey(), repairRate(entry.getValue())))
-                .sorted(Comparator.comparingDouble(WelderRate::rate)
-                        .reversed()
-                        .thenComparing(WelderRate::welder, collator))
+                .sorted(worstFirst(WelderRate::rate, WelderRate::welder))
                 .toList();
+    }
+
+    /** Records grouped under their welder's stencil, in the order the stencils first appear. */
+    private static <T> Map<String, List<T>> byWelder(List<T> records, Function<T, String> welderOf) {
+        Map<String, List<T>> grouped = new LinkedHashMap<>();
+        for (T record : records) {
+            String welder = Objects.requireNonNullElse(welderOf.apply(record), UNKNOWN_WELDER);
+            grouped.computeIfAbsent(welder, key -> new ArrayList<>()).add(record);
+        }
+        return grouped;
+    }
+
+    private static <T> Comparator<T> worstFirst(ToDoubleFunction<T> rate, Function<T, String> welder) {
+        Comparator<T> byRate = Comparator.comparingDouble(rate);
+        return byRate.reversed().thenComparing(welder, Collator.getInstance(Locale.ROOT));
+    }
+
+    /**
+     * The repair rate by length of weld rather than by joints: inches ground out and rewelded over
+     * inches radiographed. A client paying by the foot reads it this way, and it is the fairer number
+     * for a welder whose joints are mixed sizes, where one repair on a two inch joint and one on a
+     * thirty six inch joint are not the same amount of bad weld.
+     */
+    public static LengthRate lengthRate(List<WeldLengthOutcome> joints) {
+        return lengthRate(ALL_WELDERS, joints);
+    }
+
+    /** The length rate split by welder stencil, worst first and stencils in order between equals. */
+    public static List<LengthRate> welderLengthRates(List<WeldLengthOutcome> joints) {
+        Guard.requireArray(joints, "joints");
+        return byWelder(joints, WeldLengthOutcome::welder).entrySet().stream()
+                .map(entry -> lengthRate(entry.getKey(), entry.getValue()))
+                .sorted(worstFirst(LengthRate::rate, LengthRate::welder))
+                .toList();
+    }
+
+    private static LengthRate lengthRate(String welder, List<WeldLengthOutcome> joints) {
+        Guard.requireArray(joints, "joints");
+        double radiographed = 0;
+        double repaired = 0;
+        for (WeldLengthOutcome joint : joints) {
+            if (joint == null) {
+                throw new BadInputException("every entry must be a joint record", Details.of("got", null));
+            }
+            Guard.requireAtLeast(joint.radiographedIn(), 0, "length radiographed");
+            Guard.requireAtLeast(joint.repairedIn(), 0, "length repaired");
+            if (joint.repairedIn() > joint.radiographedIn()) {
+                throw new BadInputException(
+                        "a joint cannot have more weld repaired than was radiographed",
+                        Details.of("radiographedIn", joint.radiographedIn(), "repairedIn", joint.repairedIn()));
+            }
+            radiographed += joint.radiographedIn();
+            repaired += joint.repairedIn();
+        }
+        return new LengthRate(
+                welder,
+                Num.round(radiographed, 2),
+                Num.round(repaired, 2),
+                radiographed == 0 ? 0 : Num.round(repaired / radiographed, 4));
     }
 
     public static RepairRate rollingRate(List<JointOutcome> joints) {
@@ -143,16 +191,8 @@ public final class Rate {
 
     /** Every welder currently over the limit, worst first. */
     public static List<WelderThreshold> weldersOverThreshold(List<JointOutcome> joints, ThresholdOptions options) {
-        List<JointOutcome> counted = countable(joints);
-        Set<String> welders = new LinkedHashSet<>();
-        counted.forEach(joint -> welders.add(welderOf(joint)));
-        return welders.stream()
-                .map(welder -> {
-                    List<JointOutcome> theirs = counted.stream()
-                            .filter(joint -> welderOf(joint).equals(welder))
-                            .toList();
-                    return WelderThreshold.of(welder, exceedsThreshold(theirs, options));
-                })
+        return byWelder(countable(joints), JointOutcome::welder).entrySet().stream()
+                .map(entry -> WelderThreshold.of(entry.getKey(), exceedsThreshold(entry.getValue(), options)))
                 .filter(WelderThreshold::exceeds)
                 .sorted(Comparator.comparingDouble(WelderThreshold::rate).reversed())
                 .toList();

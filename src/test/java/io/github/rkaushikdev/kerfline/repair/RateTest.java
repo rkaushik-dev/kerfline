@@ -221,4 +221,58 @@ class RateTest {
                     .isEqualTo(20);
         }
     }
+
+    @Nested
+    class ByLengthOfWeld {
+
+        private final List<WeldLengthOutcome> joints = List.of(
+                new WeldLengthOutcome("W-7", 7.5, 0),
+                new WeldLengthOutcome("W-7", 113.1, 2),
+                new WeldLengthOutcome("W-9", 7.5, 1.5),
+                new WeldLengthOutcome("W-9", 7.5, 0),
+                new WeldLengthOutcome(null, 20.8, 0));
+
+        @Test
+        void putsInchesRepairedOverInchesRadiographed() {
+            LengthRate all = Rate.lengthRate(joints);
+            assertThat(all.welder()).isEqualTo("all");
+            assertThat(all.radiographedIn()).isEqualTo(156.4);
+            assertThat(all.repairedIn()).isEqualTo(3.5);
+            assertThat(all.rate()).isEqualTo(0.0224);
+        }
+
+        @Test
+        void tellsTheSmallBoreWelderFromTheBigPipeOne() {
+            // Each welder has one repair in two joints; by length W-9 put in far more bad weld.
+            List<LengthRate> rates = Rate.welderLengthRates(joints);
+            assertThat(rates.stream().map(LengthRate::welder)).containsExactly("W-9", "W-7", "unknown");
+            assertThat(rates.get(0).rate()).isEqualTo(0.1);
+            assertThat(rates.get(1).rate()).isEqualTo(0.0166);
+            assertThat(Rate.welderRates(List.of(
+                                    new JointOutcome("W-7", "accept"),
+                                    new JointOutcome("W-7", "repair"),
+                                    new JointOutcome("W-9", "repair"),
+                                    new JointOutcome("W-9", "accept")))
+                            .stream()
+                            .map(WelderRate::rate))
+                    .containsExactly(0.5, 0.5);
+        }
+
+        @Test
+        void isNoughtOverNothingRadiographed() {
+            assertThat(Rate.lengthRate(List.of()).rate()).isZero();
+            assertThat(Rate.welderLengthRates(List.of())).isEmpty();
+        }
+
+        @Test
+        void refusesMoreRepairedThanWasShot() {
+            assertThatThrownBy(() -> Rate.lengthRate(List.of(new WeldLengthOutcome("W-7", 7.5, 8))))
+                    .hasMessageContaining("more weld repaired than was radiographed");
+            assertThatThrownBy(() -> Rate.lengthRate(List.of(new WeldLengthOutcome("W-7", -1, 0))))
+                    .hasMessageContaining("length radiographed");
+            List<WeldLengthOutcome> withHole = new ArrayList<>();
+            withHole.add(null);
+            assertThatThrownBy(() -> Rate.lengthRate(withHole)).hasMessageContaining("joint record");
+        }
+    }
 }
