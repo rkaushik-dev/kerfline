@@ -37,6 +37,10 @@ public final class Api1104 {
     private static final Map<IndicationType, Api1104Rule> RULES = rules();
 
     private static final double SLAG_WIDTH_IN = 0.0625;
+    private static final String ISOLATED = "isolated";
+    private static final double ISOLATED_WIDTH_IN = 0.125;
+    private static final double ISOLATED_WINDOW_IN = 0.5;
+    private static final int ISOLATED_COUNT = 4;
     private static final double PORE_IN = 0.125;
     private static final double PORE_WALL_FRACTION = 0.25;
     private static final double CLUSTER_IN = 0.5;
@@ -127,30 +131,82 @@ public final class Api1104 {
                 size);
     }
 
-    /** Slag is capped on length and, separately and first, on width. */
+    /** True for slag the reader marked {@code isolated}; any other slag is an elongated line. */
+    public static boolean isIsolatedSlag(Indication indication) {
+        return indication.type() == IndicationType.SLAG
+                && indication.note().filter(ISOLATED::equals).isPresent();
+    }
+
+    /**
+     * Slag is capped on width first and then on length. An elongated line is held to a sixteenth wide
+     * and two inches long. An isolated inclusion is allowed twice the width and has no length cap of
+     * its own, because the code holds isolated slag on how much of it a foot of weld carries instead.
+     */
     public static ClauseVerdict judgeSlag(Indication indication) {
         Api1104Rule rule = RULES.get(IndicationType.SLAG);
-        double size = Measure.governingSizeIn(indication);
-        if (indication.widthIn().isPresent() && indication.widthIn().getAsDouble() > SLAG_WIDTH_IN) {
-            double width = indication.widthIn().getAsDouble();
-            return Verdict.makeVerdict(
-                    Disposition.REPAIR,
-                    CODE,
-                    rule.clause(),
-                    "slag " + Num.text(Num.round(width, 4)) + " in wide, cap is " + Num.text(SLAG_WIDTH_IN) + " in",
-                    indication,
-                    width);
+        boolean isolated = isIsolatedSlag(indication);
+        CapCheck check = CapCheck.of(CODE, rule.clause(), isolated ? "isolated slag" : "slag")
+                .indication(indication);
+        if (indication.widthIn().isPresent()) {
+            ClauseVerdict byWidth =
+                    Common.capVerdict(check.size(indication.widthIn().getAsDouble())
+                            .cap(isolated ? ISOLATED_WIDTH_IN : SLAG_WIDTH_IN)
+                            .units("in wide"));
+            if (isolated || !Verdict.isAcceptable(byWidth)) {
+                return byWidth;
+            }
         }
-        if (size <= rule.singleIn()) {
+        if (isolated) {
             return Verdict.accept(CODE, rule.clause());
         }
-        return Verdict.makeVerdict(
-                Disposition.REPAIR,
-                CODE,
-                rule.clause(),
-                "slag " + Num.text(Num.round(size, 3)) + " in long, cap is " + Num.text(rule.singleIn()) + " in",
-                indication,
-                size);
+        return Common.capVerdict(check.size(Measure.governingSizeIn(indication))
+                .cap(rule.singleIn())
+                .units("in long"));
+    }
+
+    /**
+     * Isolated slag in any twelve inches, read round the joint: no more than half an inch of it in
+     * all, and no more than four inclusions of it.
+     */
+    public static List<ClauseVerdict> judgeIsolatedSlag(List<Indication> indications, double weldLengthIn) {
+        Guard.requireArray(indications, "indications");
+        Guard.requireAbove(weldLengthIn, 0, "weld length");
+        List<Indication> isolated =
+                indications.stream().filter(Api1104::isIsolatedSlag).toList();
+        if (isolated.isEmpty()) {
+            return List.of();
+        }
+        String clause = RULES.get(IndicationType.SLAG).clause();
+        boolean placed =
+                isolated.stream().anyMatch(indication -> indication.at().isPresent());
+        double length = placed
+                ? Measure.worstWindowRound(isolated, WINDOW_IN, weldLengthIn).totalIn()
+                : Measure.cumulativeLengthIn(isolated);
+        double count = placed
+                ? Measure.worstWindowRound(isolated, WINDOW_IN, weldLengthIn, indication -> 1)
+                        .totalIn()
+                : isolated.size();
+
+        List<ClauseVerdict> verdicts = new ArrayList<>();
+        if (length > ISOLATED_WINDOW_IN) {
+            verdicts.add(Verdict.makeVerdict(
+                    Disposition.REPAIR,
+                    CODE,
+                    clause,
+                    "isolated slag totals " + Num.text(Num.round(length, 3)) + " in in " + Num.text(WINDOW_IN)
+                            + " in, cap is " + Num.text(ISOLATED_WINDOW_IN) + " in",
+                    length));
+        }
+        if (count > ISOLATED_COUNT) {
+            verdicts.add(Verdict.makeVerdict(
+                    Disposition.REPAIR,
+                    CODE,
+                    clause,
+                    Num.text(count) + " isolated slag inclusions in " + Num.text(WINDOW_IN) + " in, cap is "
+                            + ISOLATED_COUNT,
+                    count));
+        }
+        return List.copyOf(verdicts);
     }
 
     /** Everything covered by a plain single length cap; a type with no rule is accepted. */
@@ -195,7 +251,7 @@ public final class Api1104 {
         Guard.requireAbove(weldLengthIn, 0, "weld length");
         Guard.requireArray(indications, "indications");
         List<Indication> ofType = indications.stream()
-                .filter(indication -> indication.type() == type)
+                .filter(indication -> indication.type() == type && !isIsolatedSlag(indication))
                 .toList();
         if (rule == null || ofType.isEmpty()) {
             return List.of();
@@ -259,6 +315,7 @@ public final class Api1104 {
         for (IndicationType type : RULES.keySet()) {
             verdicts.addAll(judgeAggregate(indications, type, weldLengthIn));
         }
+        verdicts.addAll(judgeIsolatedSlag(indications, weldLengthIn));
         return Common.settle(verdicts, CODE, "9.3");
     }
 }

@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.rkaushikdev.kerfline.indication.Indication;
 import io.github.rkaushikdev.kerfline.indication.IndicationType;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -143,6 +144,92 @@ class Api1104Test {
             assertThat(Api1104.judgeSlag(ind("SLAG", 1, input -> input.widthIn(0.05)))
                             .disposition())
                     .isEqualTo(Disposition.ACCEPT);
+        }
+    }
+
+    @Nested
+    class IsolatedSlag {
+
+        private Indication isolated(double lengthIn, double at) {
+            return ind("SLAG", lengthIn, input -> input.note("isolated").at(at));
+        }
+
+        @Test
+        void tellsIsolatedSlagFromAnElongatedLine() {
+            assertThat(Api1104.isIsolatedSlag(isolated(0.1, 0))).isTrue();
+            assertThat(Api1104.isIsolatedSlag(ind("SLAG", 0.1))).isFalse();
+            assertThat(Api1104.isIsolatedSlag(ind("POROSITY", 0.1, input -> input.note("isolated"))))
+                    .isFalse();
+        }
+
+        @Test
+        void allowsIsolatedSlagTwiceTheWidthOfALine() {
+            Indication line = ind("SLAG", 0.3, input -> input.widthIn(0.1));
+            Indication inclusion = ind("SLAG", 0.3, input -> input.widthIn(0.1).note("isolated"));
+            assertThat(Api1104.judgeSlag(line).disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(Api1104.judgeSlag(inclusion).disposition()).isEqualTo(Disposition.ACCEPT);
+        }
+
+        @Test
+        void capsIsolatedSlagAtAnEighthWide() {
+            Indication wide = ind("SLAG", 0.3, input -> input.widthIn(0.15).note("isolated"));
+            ClauseVerdict verdict = Api1104.judgeSlag(wide);
+            assertThat(verdict.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(verdict.reason()).hasValue("isolated slag 0.15 in wide, cap is 0.125 in wide");
+        }
+
+        @Test
+        void leavesTheLengthOfOneIsolatedInclusionToTheFootOfWeldItSitsIn() {
+            assertThat(Api1104.judgeSlag(isolated(0.4, 0)).disposition()).isEqualTo(Disposition.ACCEPT);
+            assertThat(Api1104.judgeSlag(ind("SLAG", 2.5)).reason()).hasValue("slag 2.5 in long, cap is 2 in long");
+        }
+
+        @Test
+        void capsIsolatedSlagAtHalfAnInchInAFootReadRoundTheTieIn() {
+            List<ClauseVerdict> verdicts =
+                    Api1104.judgeIsolatedSlag(List.of(isolated(0.3, 19), isolated(0.3, 1)), 20.8);
+            assertThat(verdicts).singleElement().satisfies(verdict -> {
+                assertThat(verdict.reason()).hasValue("isolated slag totals 0.6 in in 12 in, cap is 0.5 in");
+                assertThat(verdict.measured()).hasValue(0.6);
+            });
+            assertThat(Api1104.judgeIsolatedSlag(List.of(isolated(0.3, 19), isolated(0.3, 1)), 60))
+                    .isEmpty();
+        }
+
+        @Test
+        void allowsFourIsolatedInclusionsInAFootButNotFive() {
+            List<Indication> four = List.of(isolated(0.05, 1), isolated(0.05, 2), isolated(0.05, 3), isolated(0.05, 4));
+            assertThat(Api1104.judgeIsolatedSlag(four, 20.8)).isEmpty();
+            List<Indication> five = new ArrayList<>(four);
+            five.add(isolated(0.05, 5));
+            assertThat(Api1104.judgeIsolatedSlag(five, 20.8)).singleElement().satisfies(verdict -> assertThat(
+                            verdict.reason())
+                    .hasValue("5 isolated slag inclusions in 12 in, cap is 4"));
+        }
+
+        @Test
+        void countsUnplacedInclusionsAcrossTheWholeWeld() {
+            List<Indication> unplaced = List.of(
+                    ind("SLAG", 0.3, input -> input.note("isolated")),
+                    ind("SLAG", 0.3, input -> input.note("isolated")));
+            assertThat(Api1104.judgeIsolatedSlag(unplaced, 20.8)).hasSize(1);
+            assertThat(Api1104.judgeIsolatedSlag(List.of(ind("SLAG", 0.3)), 20.8))
+                    .isEmpty();
+        }
+
+        @Test
+        void keepsIsolatedSlagOutOfTheElongatedTotal() {
+            List<Indication> set = List.of(at("SLAG", 1.8, 0), isolated(0.4, 1));
+            assertThat(Api1104.judgeAggregate(set, IndicationType.SLAG, 20.8)).isEmpty();
+        }
+
+        @Test
+        void failsAJointOnIsolatedSlagAlone() {
+            List<Indication> five = List.of(
+                    isolated(0.05, 1), isolated(0.05, 2), isolated(0.05, 3), isolated(0.05, 4), isolated(0.05, 5));
+            JointVerdict result = Api1104.judgeJoint(five, 0.28, 20.8);
+            assertThat(result.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(result.reasons()).containsExactly("5 isolated slag inclusions in 12 in, cap is 4");
         }
     }
 

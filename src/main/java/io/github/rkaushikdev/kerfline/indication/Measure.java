@@ -136,8 +136,17 @@ public final class Measure {
      * weld or longer holds all of it.
      */
     public static WeldWindow worstWindowRound(List<Indication> indications, double windowIn, double circumferenceIn) {
+        return worstWindowRound(indications, windowIn, circumferenceIn, Measure::lengthOf);
+    }
+
+    /** The worst window round a girth weld, measured by {@code sizeOf}; counting is a size of one each. */
+    public static WeldWindow worstWindowRound(
+            List<Indication> indications,
+            double windowIn,
+            double circumferenceIn,
+            ToDoubleFunction<Indication> sizeOf) {
         Guard.requireAbove(circumferenceIn, 0, "weld length round the joint");
-        return heaviest(indications, windowIn, OptionalDouble.of(circumferenceIn), Measure::lengthOf);
+        return heaviest(indications, windowIn, OptionalDouble.of(circumferenceIn), sizeOf);
     }
 
     private static double lengthOf(Indication indication) {
