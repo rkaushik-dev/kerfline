@@ -1,9 +1,12 @@
 package io.github.rkaushikdev.kerfline.geom;
 
+import java.util.Optional;
+
 /**
  * What a crew asks when it wants to know how far out to crank the source: the pipe, the source
  * size, the most shots it will accept (four unless stated), the thickness increase the procedure
- * caps a shot at (1.2 unless stated), and whether the source can go inside.
+ * caps a shot at (1.2 unless stated), whether the source can go inside, and the ISO 17636 testing
+ * class the client wants held, if any.
  */
 public record WorkingDistanceQuestion(
         double odIn,
@@ -11,7 +14,8 @@ public record WorkingDistanceQuestion(
         double sourceSizeIn,
         int maxShots,
         double maxThicknessRatio,
-        boolean sourceCanEnter) {
+        boolean sourceCanEnter,
+        Optional<IsoClass> isoClass) {
 
     public static final int DEFAULT_MAX_SHOTS = 4;
     public static final double DEFAULT_MAX_THICKNESS_RATIO = 1.2;
@@ -27,7 +31,8 @@ public record WorkingDistanceQuestion(
                 .sourceSizeIn(sourceSizeIn)
                 .maxShots(maxShots)
                 .maxThicknessRatio(maxThicknessRatio)
-                .sourceCanEnter(sourceCanEnter);
+                .sourceCanEnter(sourceCanEnter)
+                .isoClass(isoClass.orElse(null));
     }
 
     /** Builds a question with the shop defaults filled in; a dimension left unset is NaN. */
@@ -38,6 +43,7 @@ public record WorkingDistanceQuestion(
         private int maxShots = DEFAULT_MAX_SHOTS;
         private double maxThicknessRatio = DEFAULT_MAX_THICKNESS_RATIO;
         private boolean sourceCanEnter;
+        private IsoClass isoClass;
 
         private Builder() {}
 
@@ -71,8 +77,21 @@ public record WorkingDistanceQuestion(
             return this;
         }
 
+        /** The ISO 17636 testing class to hold as well, or null for none. */
+        public Builder isoClass(IsoClass value) {
+            this.isoClass = value;
+            return this;
+        }
+
         public WorkingDistanceQuestion build() {
-            return new WorkingDistanceQuestion(odIn, wallIn, sourceSizeIn, maxShots, maxThicknessRatio, sourceCanEnter);
+            return new WorkingDistanceQuestion(
+                    odIn,
+                    wallIn,
+                    sourceSizeIn,
+                    maxShots,
+                    maxThicknessRatio,
+                    sourceCanEnter,
+                    Optional.ofNullable(isoClass));
         }
     }
 }

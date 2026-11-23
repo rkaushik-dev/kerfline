@@ -1,16 +1,22 @@
 package io.github.rkaushikdev.kerfline.geom;
 
-import java.util.Locale;
-
 /** The rule that decided how far out the source has to go. */
 public enum Constraint {
     /** The geometric unsharpness limit. */
-    UNSHARPNESS,
+    UNSHARPNESS("unsharpness"),
     /** The number of shots allowed round the joint. */
-    COVERAGE;
+    COVERAGE("coverage"),
+    /** The ISO 17636-1 minimum source to object distance for the testing class asked for. */
+    ISO_17636("ISO 17636");
 
-    /** The word a technique sheet prints: {@code unsharpness} or {@code coverage}. */
+    private final String label;
+
+    Constraint(String label) {
+        this.label = label;
+    }
+
+    /** The words a technique sheet prints: {@code unsharpness}, {@code coverage} or {@code ISO 17636}. */
     public String label() {
-        return name().toLowerCase(Locale.ROOT);
+        return label;
     }
 }

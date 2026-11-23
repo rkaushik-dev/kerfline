@@ -123,6 +123,39 @@ class SetupTest {
         }
 
         @Test
+        void letsAnIsoClassPushTheSourceFurtherOut() {
+            WorkingDistance plain =
+                    Setup.shortestWorkingDistance(question().maxShots(20).build());
+            WorkingDistance classB = Setup.shortestWorkingDistance(
+                    question().maxShots(20).isoClass(IsoClass.B).build());
+            assertThat(plain.isoMinimumIn()).isEmpty();
+            assertThat(plain.governedBy()).isNotEqualTo(Constraint.ISO_17636);
+            assertThat(classB.governedBy()).isEqualTo(Constraint.ISO_17636);
+            assertThat(classB.isoMinimumIn()).hasValue(54.86);
+            assertThat(classB.sourceToObjectIn()).hasValue(54.86);
+            assertThat(classB.governedBy().label()).isEqualTo("ISO 17636");
+        }
+
+        @Test
+        void leavesTheAnswerAloneWhenTheClassIsTheGentlerRule() {
+            WorkingDistance plain =
+                    Setup.shortestWorkingDistance(question().maxShots(6).build());
+            WorkingDistance classA = Setup.shortestWorkingDistance(
+                    question().maxShots(6).isoClass(IsoClass.A).build());
+            assertThat(classA.isoMinimumIn().getAsDouble())
+                    .isLessThan(classA.sourceToObjectIn().getAsDouble());
+            assertThat(classA.sourceToObjectIn()).isEqualTo(plain.sourceToObjectIn());
+            assertThat(classA.governedBy()).isEqualTo(plain.governedBy());
+        }
+
+        @Test
+        void keepsTheClassWhenAQuestionIsRebuilt() {
+            WorkingDistanceQuestion asked = question().isoClass(IsoClass.B).build();
+            assertThat(asked.toBuilder().build().isoClass()).hasValue(IsoClass.B);
+            assertThat(question().build().isoClass()).isEmpty();
+        }
+
+        @Test
         void refusesAShotCountThatIsNotAWholeNumberAboveZero() {
             assertThatThrownBy(() ->
                             Setup.shortestWorkingDistance(question().maxShots(0).build()))

@@ -13,7 +13,8 @@ import java.util.OptionalDouble;
  * Working out where the source goes.
  *
  * <p>The crew's question is never "what is the unsharpness at 24 inches". It is "how far out do I
- * have to crank it", and the answer is governed by two things at once. Cranking out improves the
+ * have to crank it", and the answer is governed by two things at once, three when a client holds the
+ * work to an ISO 17636 testing class. Cranking out improves the
  * unsharpness and it also widens what one shot covers, so both constraints push the same way and
  * the answer is whichever of them is further out.
  *
@@ -55,43 +56,47 @@ public final class Setup {
     }
 
     /**
-     * The shortest crank that satisfies both constraints. Says which of the two governed, because
-     * that is what tells a crew whether to fetch a smaller source or accept more shots when the
-     * answer is impractical, and says plainly when the shot count cannot be met at any distance.
+     * The shortest crank that satisfies every constraint asked about. Says which one governed,
+     * because that is what tells a crew whether to fetch a smaller source or accept more shots when
+     * the answer is impractical, and says plainly when the shot count cannot be met at any distance.
+     * Coverage wins a tie, since a crew can see it on the pipe. When the question names an ISO
+     * testing class, its minimum distance is a third constraint pushing the same way as the other two.
      */
     public static WorkingDistance shortestWorkingDistance(WorkingDistanceQuestion question) {
         int maxShots = question.maxShots();
         Guard.requireAbove(maxShots, 0, "shot count");
         UnsharpnessDistance sharpness = distanceForUnsharpness(
                 question.odIn(), question.wallIn(), question.sourceSizeIn(), question.sourceCanEnter());
-
+        OptionalDouble forIso = question.isoClass().stream()
+                .mapToDouble(testClass -> Iso17636.minimumSourceToObjectIn(
+                        question.sourceSizeIn(), sharpness.objectToFilmIn(), question.wallIn(), testClass))
+                .findFirst();
         OptionalDouble forShots = distanceForShots(question.odIn(), maxShots, question.maxThicknessRatio());
-        if (forShots.isEmpty()) {
-            return new WorkingDistance(
-                    sharpness.technique(),
-                    sharpness.objectToFilmIn(),
-                    sharpness.limitIn(),
-                    sharpness.minimumSourceToObjectIn(),
-                    false,
-                    OptionalDouble.empty(),
-                    OptionalDouble.empty(),
-                    Constraint.COVERAGE,
-                    Optional.of(maxShots + " shots cannot cover this joint at any distance with a "
-                            + Num.text(question.maxThicknessRatio()) + " ratio"));
-        }
 
-        double required = forShots.getAsDouble();
-        double governed = Math.max(sharpness.minimumSourceToObjectIn(), required);
+        Constraint governedBy = Constraint.UNSHARPNESS;
+        double governed = sharpness.minimumSourceToObjectIn();
+        if (forIso.isPresent() && forIso.getAsDouble() > governed) {
+            governedBy = Constraint.ISO_17636;
+            governed = forIso.getAsDouble();
+        }
+        if (forShots.isEmpty() || forShots.getAsDouble() >= governed) {
+            governedBy = Constraint.COVERAGE;
+            governed = forShots.orElse(Double.NaN);
+        }
         return new WorkingDistance(
                 sharpness.technique(),
                 sharpness.objectToFilmIn(),
                 sharpness.limitIn(),
                 sharpness.minimumSourceToObjectIn(),
-                true,
-                OptionalDouble.of(required),
-                OptionalDouble.of(Num.round(governed, 2)),
-                governed == required ? Constraint.COVERAGE : Constraint.UNSHARPNESS,
-                Optional.empty());
+                forShots.isPresent(),
+                forShots,
+                forIso,
+                forShots.isPresent() ? OptionalDouble.of(Num.round(governed, 2)) : OptionalDouble.empty(),
+                governedBy,
+                forShots.isPresent()
+                        ? Optional.empty()
+                        : Optional.of(maxShots + " shots cannot cover this joint at any distance with a "
+                                + Num.text(question.maxThicknessRatio()) + " ratio"));
     }
 
     private static OptionalDouble distanceForShots(double odIn, int shots, double maxThicknessRatio) {
