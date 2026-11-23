@@ -2,6 +2,7 @@ package io.github.rkaushikdev.kerfline.density;
 
 import io.github.rkaushikdev.kerfline.errors.BadInputException;
 import io.github.rkaushikdev.kerfline.errors.Details;
+import io.github.rkaushikdev.kerfline.geom.IsoClass;
 import io.github.rkaushikdev.kerfline.isotope.Catalog;
 import io.github.rkaushikdev.kerfline.isotope.SourceKind;
 import io.github.rkaushikdev.kerfline.util.Num;
@@ -29,6 +30,8 @@ public final class Limits {
     private static final double GAMMA_FLOOR = 2;
     private static final double COMPOSITE_EACH = 1.3;
     private static final double CEILING = 4;
+    private static final double ISO_A_FLOOR = 2.0;
+    private static final double ISO_B_FLOOR = 2.3;
 
     private static final List<SourceKind> KINDS = List.of(SourceKind.XRAY, SourceKind.GAMMA);
 
@@ -67,6 +70,17 @@ public final class Limits {
     public static DensityLimits densityLimits(SourceKind kind, boolean composite) {
         double single = kind == SourceKind.GAMMA ? GAMMA_FLOOR : XRAY_FLOOR;
         return new DensityLimits(kind, composite ? COMPOSITE_EACH : single, CEILING, composite);
+    }
+
+    /**
+     * The lowest density ISO 17636-1 accepts for a testing class: 2.0 for class A and 2.3 for class
+     * B, the extra contrast being much of what class B buys.
+     */
+    public static double isoMinimumDensity(IsoClass testClass) {
+        if (testClass == null) {
+            throw new BadInputException("an ISO testing class is A or B", Details.of("got", null));
+        }
+        return testClass == IsoClass.B ? ISO_B_FLOOR : ISO_A_FLOOR;
     }
 
     public static double ceilingDensity() {

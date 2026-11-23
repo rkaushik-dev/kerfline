@@ -7,6 +7,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.rkaushikdev.kerfline.accept.CodeJudgement;
 import io.github.rkaushikdev.kerfline.accept.Disposition;
+import io.github.rkaushikdev.kerfline.accept.JudgeOptions;
+import io.github.rkaushikdev.kerfline.density.Limits;
+import io.github.rkaushikdev.kerfline.geom.IsoClass;
 import io.github.rkaushikdev.kerfline.indication.Indication;
 import io.github.rkaushikdev.kerfline.indication.IndicationInput;
 import io.github.rkaushikdev.kerfline.indication.Measure;
@@ -274,6 +277,63 @@ class JobTest {
         void leavesTheSiteOutWhenThereIsNone() {
             JobContract noSite = Job.makeJob(small().build());
             assertThat(Job.describeJob(noSite)).isEqualTo("C-1 for x, API1104 at five coverage");
+        }
+    }
+
+    @Nested
+    class CrackRepairsAndTheIsoClass {
+
+        private final List<Indication> shortCrack =
+                List.of(Measure.makeIndication(IndicationInput.of("CRACK", 1).at(4)));
+
+        @Test
+        void startsAJobWithNoCrackRepairsAndNoClass() {
+            assertThat(JOB.crackRepairs()).isFalse();
+            assertThat(JOB.isoClass()).isEmpty();
+            JobContract kept = Job.makeJob(small().crackRepairs(true).isoClass(IsoClass.B).build().toBuilder()
+                    .build());
+            assertThat(kept.crackRepairs()).isTrue();
+            assertThat(kept.isoClass()).hasValue(IsoClass.B);
+        }
+
+        @Test
+        void judgesACrackUnderTheAuthorityTheContractGives() {
+            JobContract authorised = Job.makeJob(small().crackRepairs(true).build());
+            assertThat(Job.judgeUnderContract(JOB, JOINT, shortCrack).disposition())
+                    .isEqualTo(Disposition.REJECT);
+            assertThat(Job.judgeUnderContract(authorised, JOINT, shortCrack).disposition())
+                    .isEqualTo(Disposition.REPAIR);
+        }
+
+        @Test
+        void letsTheCallerOverrideTheContractOnTheDay() {
+            JobContract authorised = Job.makeJob(small().crackRepairs(true).build());
+            CodeJudgement refused =
+                    Job.judgeUnderContract(authorised, JOINT, shortCrack, JudgeOptions.NONE.crackRepairs(false));
+            assertThat(refused.disposition()).isEqualTo(Disposition.REJECT);
+        }
+
+        @Test
+        void raisesTheDensityFloorToTheIsoClass() {
+            assertThat(Limits.isoMinimumDensity(IsoClass.A)).isEqualTo(2.0);
+            assertThat(Limits.isoMinimumDensity(IsoClass.B)).isEqualTo(2.3);
+            assertThat(Job.densityFloor(JOB)).isEqualTo(2);
+            assertThat(Job.densityFloor(Job.makeJob(small().isoClass(IsoClass.B).build())))
+                    .isEqualTo(2.3);
+            assertThat(Job.densityFloor(Job.makeJob(
+                            small().isoClass(IsoClass.A).densityMinimum(2.5).build())))
+                    .isEqualTo(2.5);
+            assertThatThrownBy(() -> Limits.isoMinimumDensity(null)).hasMessageContaining("A or B");
+        }
+
+        @Test
+        void reportsAFilmUnderTheClassFloorAsADeviation() {
+            JobContract classB = Job.makeJob(small().isoClass(IsoClass.B).build());
+            DeviationCheck check = Job.deviations(classB, ActualConditions.NOTHING.densityMinimum(2.1));
+            assertThat(check.deviations()).containsExactly(new Deviation("density", 2.3, 2.1));
+            assertThat(Job.deviations(JOB, ActualConditions.NOTHING.densityMinimum(2.1))
+                            .conforms())
+                    .isTrue();
         }
     }
 }

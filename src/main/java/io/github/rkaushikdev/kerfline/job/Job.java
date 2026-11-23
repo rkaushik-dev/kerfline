@@ -4,6 +4,7 @@ import io.github.rkaushikdev.kerfline.accept.AsmeB313;
 import io.github.rkaushikdev.kerfline.accept.CodeJudgement;
 import io.github.rkaushikdev.kerfline.accept.Engine;
 import io.github.rkaushikdev.kerfline.accept.JudgeOptions;
+import io.github.rkaushikdev.kerfline.density.Limits;
 import io.github.rkaushikdev.kerfline.errors.BadInputException;
 import io.github.rkaushikdev.kerfline.errors.Details;
 import io.github.rkaushikdev.kerfline.indication.Indication;
@@ -69,7 +70,20 @@ public final class Job {
                 input.reinforcementMaxIn(),
                 input.densityMinimum(),
                 input.calledForSensitivity(),
-                Coverage.levelFraction(input.coverage()));
+                Coverage.levelFraction(input.coverage()),
+                input.crackRepairs(),
+                Optional.ofNullable(input.isoClass()));
+    }
+
+    /**
+     * The lowest density the job will take: what the client agreed, raised to the ISO class floor
+     * when the work is held to a testing class, because agreeing to less than the standard the job
+     * is written to does not lower the standard.
+     */
+    public static double densityFloor(JobContract job) {
+        return job.isoClass()
+                .map(testClass -> Math.max(job.densityMinimum(), Limits.isoMinimumDensity(testClass)))
+                .orElse(job.densityMinimum());
     }
 
     /** The parameters every judgement on this job should be made with. */
@@ -83,13 +97,19 @@ public final class Job {
     }
 
     /**
-     * Judge a joint under the contract rather than under whatever was passed: the job's code, and
-     * its fluid service unless the extra options name one.
+     * Judge a joint under the contract rather than under whatever was passed: the job's code, its
+     * fluid service and its crack repair authority, each unless the extra options name their own.
      */
     public static CodeJudgement judgeUnderContract(
             JobContract job, Joint joint, List<Indication> indications, JudgeOptions extra) {
         Guard.requireArray(indications, "indications");
-        JudgeOptions options = extra.service() != null ? extra : extra.service(job.service());
+        JudgeOptions options = extra;
+        if (options.service() == null) {
+            options = options.service(job.service());
+        }
+        if (options.crackRepairs() == null) {
+            options = options.crackRepairs(job.crackRepairs());
+        }
         return Engine.judge(job.code(), indications, joint, options);
     }
 
@@ -97,7 +117,7 @@ public final class Job {
      * Where a shot departed from what the contract called for. Each deviation names the field,
      * what was agreed and what happened, because a deviation report that says only "does not
      * conform" starts an argument rather than ending one. The fluid service is only compared on a
-     * job whose code reads it.
+     * job whose code reads it, and density against the floor the ISO class sets when there is one.
      */
     public static DeviationCheck deviations(JobContract job, ActualConditions actual) {
         if (actual == null) {
@@ -111,9 +131,10 @@ public final class Job {
         actual.service()
                 .filter(service -> SERVICE_CODE.equals(job.code()) && !Objects.equals(service, job.service()))
                 .ifPresent(service -> found.add(new Deviation("service", job.service(), service)));
+        double densityFloor = densityFloor(job);
         actual.densityMinimum().ifPresent(density -> {
-            if (density < job.densityMinimum()) {
-                found.add(new Deviation("density", job.densityMinimum(), density));
+            if (density < densityFloor) {
+                found.add(new Deviation("density", densityFloor, density));
             }
         });
         actual.reinforcementIn().ifPresent(crown -> {
