@@ -8,6 +8,7 @@ import io.github.rkaushikdev.kerfline.util.Num;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.function.ToDoubleFunction;
 
 /**
  * Sizing an indication.
@@ -114,10 +115,40 @@ public final class Measure {
     /**
      * Cumulative length inside a sliding window of weld, which is the shape most cumulative limits
      * actually take: not "in the whole joint" but "in any six inches of it". Returns the worst
-     * window found, starting at a located indication, and where it started. Indications with no
-     * position take no part.
+     * window found, starting at a located indication, and where it started. Only the indications
+     * measured by length count towards the total, for the reason {@link #cumulativeLengthIn} gives.
+     * Indications with no position take no part.
      */
     public static WeldWindow worstWindow(List<Indication> indications, double windowIn) {
+        return worstWindow(indications, windowIn, Measure::lengthOf);
+    }
+
+    /** The worst window measured by {@code sizeOf} rather than by length, on a weld with two ends. */
+    public static WeldWindow worstWindow(
+            List<Indication> indications, double windowIn, ToDoubleFunction<Indication> sizeOf) {
+        return heaviest(indications, windowIn, OptionalDouble.empty(), sizeOf);
+    }
+
+    /**
+     * The worst window on a girth weld, which has no ends. A window that starts a few inches short of
+     * the tie-in carries on past it and picks up what lies just after zero, so two short runs either
+     * side of the start mark are read as the one run they are in the pipe. A window as long as the
+     * weld or longer holds all of it.
+     */
+    public static WeldWindow worstWindowRound(List<Indication> indications, double windowIn, double circumferenceIn) {
+        Guard.requireAbove(circumferenceIn, 0, "weld length round the joint");
+        return heaviest(indications, windowIn, OptionalDouble.of(circumferenceIn), Measure::lengthOf);
+    }
+
+    private static double lengthOf(Indication indication) {
+        return indication.type().measure() == MeasuredBy.LENGTH ? indication.sizeIn() : 0;
+    }
+
+    private static WeldWindow heaviest(
+            List<Indication> indications,
+            double windowIn,
+            OptionalDouble circumferenceIn,
+            ToDoubleFunction<Indication> sizeOf) {
         Guard.requireArray(indications, "indications");
         Guard.requireAbove(windowIn, 0, "window length");
         List<Indication> placed =
@@ -125,17 +156,34 @@ public final class Measure {
         if (placed.isEmpty()) {
             return new WeldWindow(0, 0, List.of());
         }
-        WeldWindow best = new WeldWindow(-1, 0, List.of());
+        WeldWindow best = null;
         for (Indication anchor : placed) {
             double startIn = anchor.at().getAsDouble();
             List<Indication> inside = placed.stream()
-                    .filter(i -> i.at().getAsDouble() >= startIn && i.at().getAsDouble() < startIn + windowIn)
+                    .filter(i -> aheadOf(startIn, i.at().getAsDouble(), circumferenceIn) < windowIn)
                     .toList();
-            double totalIn = cumulativeLengthIn(inside);
-            if (totalIn > best.totalIn()) {
+            double sum = 0;
+            for (Indication member : inside) {
+                sum += sizeOf.applyAsDouble(member);
+            }
+            double totalIn = Num.round(sum, 4);
+            if (best == null || totalIn > best.totalIn()) {
                 best = new WeldWindow(totalIn, Num.round(startIn, 4), inside);
             }
         }
         return best;
+    }
+
+    /**
+     * How far along the weld a position lies past the start of a window. Behind the start is never
+     * inside on a weld with ends; on a girth weld it is inside once the window has gone round.
+     */
+    private static double aheadOf(double startIn, double positionIn, OptionalDouble circumferenceIn) {
+        double ahead = positionIn - startIn;
+        if (circumferenceIn.isEmpty()) {
+            return ahead >= 0 ? ahead : Double.POSITIVE_INFINITY;
+        }
+        double round = circumferenceIn.getAsDouble();
+        return ((ahead % round) + round) % round;
     }
 }

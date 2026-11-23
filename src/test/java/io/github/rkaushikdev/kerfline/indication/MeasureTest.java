@@ -4,6 +4,7 @@ import static io.github.rkaushikdev.kerfline.testing.Close.digits;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -204,6 +205,60 @@ class MeasureTest {
         @Test
         void refusesAWindowAtZero() {
             assertThatThrownBy(() -> Measure.worstWindow(set, 0)).hasMessageContaining("greater than 0");
+        }
+    }
+
+    @Nested
+    class WorstWindowRound {
+
+        // A 6 in pipe is 20.8 in round; two short runs sit either side of the tie-in.
+        private static final double ROUND = 20.8;
+
+        private final List<Indication> set = List.of(
+                indication(slag(0.4).at(19.5)),
+                indication(slag(0.4).at(20.3)),
+                indication(slag(0.4).at(0.2)),
+                indication(slag(0.4).at(0.9)));
+
+        @Test
+        void readsTheRunsEitherSideOfTheTieInAsOne() {
+            WeldWindow worst = Measure.worstWindowRound(set, 12, ROUND);
+            assertThat(worst.totalIn()).isCloseTo(1.6, digits(4));
+            assertThat(worst.startIn()).isEqualTo(19.5);
+            assertThat(worst.indications()).hasSize(4);
+        }
+
+        @Test
+        void seesOnlyHalfOfThemOnAWeldWithEnds() {
+            assertThat(Measure.worstWindow(set, 12).totalIn()).isCloseTo(0.8, digits(4));
+        }
+
+        @Test
+        void stopsShortOfWhatTheWindowCannotReach() {
+            assertThat(Measure.worstWindowRound(set, 2, ROUND).totalIn()).isCloseTo(1.2, digits(4));
+            assertThat(Measure.worstWindowRound(set, 1, ROUND).totalIn()).isCloseTo(0.8, digits(4));
+        }
+
+        @Test
+        void holdsTheWholeWeldWhenTheWindowIsLongerThanIt() {
+            List<Indication> more = new ArrayList<>(set);
+            more.add(indication(slag(0.3).at(10)));
+            WeldWindow worst = Measure.worstWindowRound(more, 30, ROUND);
+            assertThat(worst.totalIn()).isCloseTo(1.9, digits(4));
+            assertThat(worst.indications()).hasSize(5);
+        }
+
+        @Test
+        void countsOnlyWhatIsMeasuredByLength() {
+            List<Indication> mixed = List.of(
+                    indication(slag(0.4).at(20)),
+                    indication(IndicationInput.of("POROSITY", 0.1).at(0.5)));
+            assertThat(Measure.worstWindowRound(mixed, 12, ROUND).totalIn()).isCloseTo(0.4, digits(4));
+        }
+
+        @Test
+        void refusesAWeldWithNoLength() {
+            assertThatThrownBy(() -> Measure.worstWindowRound(set, 12, 0)).hasMessageContaining("round the joint");
         }
     }
 }

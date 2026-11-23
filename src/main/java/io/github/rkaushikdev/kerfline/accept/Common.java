@@ -65,31 +65,7 @@ public final class Common {
      */
     public static WeldWindow windowTotal(
             List<Indication> indications, double windowIn, ToDoubleFunction<Indication> sizeOf) {
-        Guard.requireArray(indications, "indications");
-        Guard.requireAbove(windowIn, 0, "window length");
-        List<Indication> placed = indications.stream()
-                .filter(indication -> indication.at().isPresent())
-                .toList();
-        if (placed.isEmpty()) {
-            return new WeldWindow(0, 0, List.of());
-        }
-
-        WeldWindow best = new WeldWindow(0, at(placed.get(0)), List.of());
-        for (Indication anchor : placed) {
-            double start = at(anchor);
-            List<Indication> members = placed.stream()
-                    .filter(other -> at(other) >= start && at(other) < start + windowIn)
-                    .toList();
-            double sum = 0;
-            for (Indication member : members) {
-                sum += sizeOf.applyAsDouble(member);
-            }
-            double totalIn = Num.round(sum, 4);
-            if (totalIn > best.totalIn()) {
-                best = new WeldWindow(totalIn, Num.round(start, 4), members);
-            }
-        }
-        return best;
+        return Measure.worstWindow(indications, windowIn, sizeOf);
     }
 
     /**

@@ -183,7 +183,8 @@ public final class Api1104 {
 
     /**
      * The two caps that are not about any single indication: the total in any twelve inches, and the
-     * total as a fraction of the whole weld.
+     * total as a fraction of the whole weld. A girth weld goes all the way round, so the twelve inches
+     * are read round the joint and carry on past the tie-in rather than stopping at it.
      */
     public static List<ClauseVerdict> judgeAggregate(
             List<Indication> indications, IndicationType type, double weldLengthIn) {
@@ -198,7 +199,7 @@ public final class Api1104 {
         }
 
         List<ClauseVerdict> verdicts = new ArrayList<>();
-        WeldWindow window = Measure.worstWindow(ofType, WINDOW_IN);
+        WeldWindow window = Measure.worstWindowRound(ofType, WINDOW_IN, weldLengthIn);
         double total = Measure.cumulativeLengthIn(ofType);
         double inWindow = window.totalIn() > 0 ? window.totalIn() : total;
 

@@ -230,6 +230,23 @@ class Api1104Test {
         }
 
         @Test
+        void readsTheTwelveInchesRoundPastTheTieIn() {
+            // On a 20.8 in girth weld these are 1.6 in of IP inside one foot of weld.
+            List<Indication> set =
+                    List.of(at("IP", 0.4, 19.5), at("IP", 0.4, 20.3), at("IP", 0.4, 0.2), at("IP", 0.4, 0.9));
+            List<ClauseVerdict> verdicts = Api1104.judgeAggregate(set, IndicationType.IP, 20.8);
+            assertThat(verdicts).anyMatch(v -> v.reason().orElseThrow().contains("totals 1.6 in in 12 in"));
+        }
+
+        @Test
+        void keepsTheSameRunsApartOnAWeldTooLongToMeetRoundTheBack() {
+            List<Indication> set =
+                    List.of(at("IP", 0.4, 19.5), at("IP", 0.4, 20.3), at("IP", 0.4, 0.2), at("IP", 0.4, 0.9));
+            List<ClauseVerdict> verdicts = Api1104.judgeAggregate(set, IndicationType.IP, 60);
+            assertThat(verdicts).noneMatch(v -> v.reason().orElseThrow().contains("in 12 in"));
+        }
+
+        @Test
         void hasNoPercentageCapOnSlag() {
             assertThat(Api1104.ruleFor(IndicationType.SLAG).orElseThrow().percent())
                     .isEmpty();
