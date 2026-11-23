@@ -232,7 +232,7 @@ class CommandsTest {
                     "SLAG:0.05:5:isolated");
             CommandResult result = Commands.runCommand("judge", with(base, five.toArray(String[]::new)));
             assertThat(result.code()).isEqualTo(1);
-            assertThat(result.text()).contains("5 isolated slag inclusions in 12 in, cap is 4");
+            assertThat(result.text()).contains("5 isolated slag inclusions in 12 in from 1 in, cap is 4");
         }
 
         @Test

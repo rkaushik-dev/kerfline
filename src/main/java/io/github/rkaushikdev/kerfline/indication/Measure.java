@@ -141,7 +141,7 @@ public final class Measure {
      * Indications with no position take no part.
      */
     public static WeldWindow worstWindow(List<Indication> indications, double windowIn) {
-        return worstWindow(indications, windowIn, Measure::lengthOf);
+        return worstWindow(indications, windowIn, Measure::countedLengthIn);
     }
 
     /** The worst window measured by {@code sizeOf} rather than by length, on a weld with two ends. */
@@ -157,7 +157,7 @@ public final class Measure {
      * weld or longer holds all of it.
      */
     public static WeldWindow worstWindowRound(List<Indication> indications, double windowIn, double circumferenceIn) {
-        return worstWindowRound(indications, windowIn, circumferenceIn, Measure::lengthOf);
+        return worstWindowRound(indications, windowIn, circumferenceIn, Measure::countedLengthIn);
     }
 
     /** The worst window round a girth weld, measured by {@code sizeOf}; counting is a size of one each. */
@@ -170,7 +170,11 @@ public final class Measure {
         return heaviest(indications, windowIn, OptionalDouble.of(circumferenceIn), sizeOf);
     }
 
-    private static double lengthOf(Indication indication) {
+    /**
+     * What one indication adds to a cumulative length: its length when it is measured by length,
+     * nothing when it is measured across.
+     */
+    public static double countedLengthIn(Indication indication) {
         return indication.type().measure() == MeasuredBy.LENGTH ? indication.sizeIn() : 0;
     }
 

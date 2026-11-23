@@ -3,7 +3,6 @@ package io.github.rkaushikdev.kerfline.accept;
 import io.github.rkaushikdev.kerfline.indication.Indication;
 import io.github.rkaushikdev.kerfline.indication.IndicationType;
 import io.github.rkaushikdev.kerfline.indication.Measure;
-import io.github.rkaushikdev.kerfline.indication.WeldWindow;
 import io.github.rkaushikdev.kerfline.util.Guard;
 import io.github.rkaushikdev.kerfline.util.Num;
 import java.util.ArrayList;
@@ -24,7 +23,9 @@ import java.util.OptionalDouble;
  * ceiling for exactly that case. Undercut is capped at a sixth of the weld whatever its length.
  *
  * <p>The caps on weld length are what make this code different from the pressure vessel ones, and
- * they are why the weld length is a required argument here rather than an optional extra.
+ * they are why the weld length is a required argument here rather than an optional extra. This class
+ * judges each indication on its own; the rules that read the weld as a whole are in {@link
+ * Api1104Weld}.
  */
 public final class Api1104 {
 
@@ -42,12 +43,6 @@ public final class Api1104 {
     private static final Api1104Rule HIGH_LOW = new Api1104Rule(
             "9.3.2", 2, 3, OptionalDouble.empty(), OptionalDouble.empty(), "incomplete penetration due to high-low");
     private static final double ISOLATED_WIDTH_IN = 0.125;
-    private static final double ISOLATED_WINDOW_IN = 0.5;
-    private static final int ISOLATED_COUNT = 4;
-    private static final double HOLLOW_BEAD_SPACED_IN = 0.25;
-    private static final double HOLLOW_BEAD_GAP_IN = 2;
-    private static final String ACCUMULATION_CLAUSE = "9.3.10";
-    private static final double ACCUMULATION_WINDOW_IN = 2;
     private static final double PORE_IN = 0.125;
     private static final double PORE_WALL_FRACTION = 0.25;
     private static final double CLUSTER_IN = 0.5;
@@ -179,45 +174,6 @@ public final class Api1104 {
     }
 
     /**
-     * Isolated slag in any twelve inches, read round the joint: no more than half an inch of it in
-     * all, and no more than four inclusions of it.
-     */
-    public static List<ClauseVerdict> judgeIsolatedSlag(List<Indication> indications, double weldLengthIn) {
-        Guard.requireArray(indications, "indications");
-        Guard.requireAbove(weldLengthIn, 0, "weld length");
-        List<Indication> isolated =
-                indications.stream().filter(Api1104::isIsolatedSlag).toList();
-        if (isolated.isEmpty()) {
-            return List.of();
-        }
-        String clause = RULES.get(IndicationType.SLAG).clause();
-        boolean placed =
-                isolated.stream().anyMatch(indication -> indication.at().isPresent());
-        double length = placed
-                ? Measure.worstWindowRound(isolated, WINDOW_IN, weldLengthIn).totalIn()
-                : Measure.cumulativeLengthIn(isolated);
-        double count = placed
-                ? Measure.worstWindowRound(isolated, WINDOW_IN, weldLengthIn, indication -> 1)
-                        .totalIn()
-                : isolated.size();
-
-        List<ClauseVerdict> verdicts = new ArrayList<>();
-        if (length > ISOLATED_WINDOW_IN) {
-            verdicts.add(inAFoot(clause, "isolated slag", length, ISOLATED_WINDOW_IN));
-        }
-        if (count > ISOLATED_COUNT) {
-            verdicts.add(Verdict.makeVerdict(
-                    Disposition.REPAIR,
-                    CODE,
-                    clause,
-                    Num.text(count) + " isolated slag inclusions in " + Num.text(WINDOW_IN) + " in, cap is "
-                            + ISOLATED_COUNT,
-                    count));
-        }
-        return List.copyOf(verdicts);
-    }
-
-    /**
      * True for incomplete penetration the reader put down to high-low: the root was there, but one
      * pipe end sat proud of the other and the weld could not reach both lands.
      */
@@ -229,7 +185,7 @@ public final class Api1104 {
     /**
      * The length rule an indication is judged under, read from its type and from what the reader
      * noted: incomplete penetration put down to high-low has caps of its own, and isolated slag is
-     * held by {@link #judgeIsolatedSlag} rather than by a length rule.
+     * held by {@link Api1104Weld#judgeIsolatedSlag} rather than by a length rule.
      */
     public static Optional<Api1104Rule> ruleOf(Indication indication) {
         if (isHighLow(indication)) {
@@ -296,153 +252,18 @@ public final class Api1104 {
     }
 
     /**
-     * Hollow bead over a quarter inch long is allowed only with two clear inches to the next one, so
-     * two acceptable lengths of it cannot sit end to end in the root. Read round the joint, so the last
-     * one before the tie-in is measured to the first one after it.
-     */
-    public static List<ClauseVerdict> judgeHollowBeadSpacing(List<Indication> indications, double weldLengthIn) {
-        Guard.requireAbove(weldLengthIn, 0, "weld length");
-        List<Indication> spaced = Measure.alongTheWeld(indications).stream()
-                .filter(indication -> indication.type() == IndicationType.HOLLOW_BEAD)
-                .filter(indication -> Measure.governingSizeIn(indication) > HOLLOW_BEAD_SPACED_IN)
-                .toList();
-        if (spaced.size() < 2) {
-            return List.of();
-        }
-        String clause = RULES.get(IndicationType.HOLLOW_BEAD).clause();
-        List<ClauseVerdict> verdicts = new ArrayList<>();
-        for (int i = 0; i < spaced.size(); i++) {
-            Indication before = spaced.get(i);
-            boolean roundTheBack = i == spaced.size() - 1;
-            Indication after = spaced.get(roundTheBack ? 0 : i + 1);
-            double gap = Measure.gapIn(before, after) + (roundTheBack ? weldLengthIn : 0);
-            if (gap < HOLLOW_BEAD_GAP_IN) {
-                double clear = Num.round(Math.max(0, gap), 4);
-                verdicts.add(Verdict.makeVerdict(
-                        Disposition.REPAIR,
-                        CODE,
-                        clause,
-                        "hollow bead over " + Num.text(HOLLOW_BEAD_SPACED_IN) + " in long with " + Num.text(clear)
-                                + " in to the next, " + Num.text(HOLLOW_BEAD_GAP_IN) + " in is needed",
-                        before,
-                        clear));
-            }
-        }
-        return List.copyOf(verdicts);
-    }
-
-    /**
-     * The two caps that are not about any single indication: the total in any twelve inches, and the
-     * total as a fraction of the whole weld. A girth weld goes all the way round, so the twelve inches
-     * are read round the joint and carry on past the tie-in rather than stopping at it.
+     * The caps on one type that are not about any single indication: the total in any twelve inches,
+     * and the total against the weld length, read by {@link Api1104Weld}.
      */
     public static List<ClauseVerdict> judgeAggregate(
             List<Indication> indications, IndicationType type, double weldLengthIn) {
         Api1104Rule rule = RULES.get(type);
-        return rule == null ? List.of() : judgeAggregate(indications, rule, weldLengthIn);
+        return rule == null ? List.of() : Api1104Weld.judgeAggregate(indications, rule, weldLengthIn);
     }
 
-    /** The aggregate caps of one length rule, over the indications judged under it and no others. */
-    public static List<ClauseVerdict> judgeAggregate(
-            List<Indication> indications, Api1104Rule rule, double weldLengthIn) {
-        Guard.requireAbove(weldLengthIn, 0, "weld length");
-        Guard.requireArray(indications, "indications");
-        List<Indication> ofType = indications.stream()
-                .filter(indication -> ruleOf(indication).filter(rule::equals).isPresent())
-                .toList();
-        if (ofType.isEmpty()) {
-            return List.of();
-        }
-
-        List<ClauseVerdict> verdicts = new ArrayList<>();
-        WeldWindow window = Measure.worstWindowRound(ofType, WINDOW_IN, weldLengthIn);
-        double total = Measure.cumulativeLengthIn(ofType);
-        double inWindow = window.totalIn() > 0 ? window.totalIn() : total;
-
-        if (inWindow > rule.windowIn()) {
-            verdicts.add(inAFoot(rule.clause(), rule.label(), inWindow, rule.windowIn()));
-        }
-        if (rule.percent().isPresent() && weldLengthIn < WINDOW_IN) {
-            double percent = rule.percent().getAsDouble();
-            if (total > Num.round(weldLengthIn * percent, 4)) {
-                verdicts.add(totals(
-                        rule.clause(),
-                        rule.label(),
-                        total,
-                        ", over " + Num.text(percent * 100) + " percent of a weld under " + Num.text(WINDOW_IN)
-                                + " in"));
-            }
-        }
-        if (rule.wholeWeldFraction().isPresent()) {
-            double cap = Num.round(weldLengthIn * rule.wholeWeldFraction().getAsDouble(), 4);
-            if (total > cap) {
-                verdicts.add(totals(
-                        rule.clause(),
-                        rule.label(),
-                        total,
-                        ", over " + Num.text(cap) + " in allowed in a " + Num.text(Num.round(weldLengthIn, 3))
-                                + " in weld"));
-            }
-        }
-
-        return List.copyOf(verdicts);
-    }
-
-    /**
-     * True for what the accumulation rule adds up: every imperfection except high-low penetration and
-     * undercut, which the code leaves to their own caps because neither is a void in the weld metal.
-     */
-    public static boolean countsTowardAccumulation(Indication indication) {
-        return !isHighLow(indication) && indication.type() != IndicationType.UNDERCUT;
-    }
-
-    /**
-     * The accumulation rule. Each kind of imperfection can sit inside its own caps and the joint can
-     * still be full of them, so the code adds every kind together: no more than two inches in any
-     * foot of weld, and no more than eight percent of the weld, whatever its length.
-     */
-    public static List<ClauseVerdict> judgeAccumulation(List<Indication> indications, double weldLengthIn) {
-        Guard.requireArray(indications, "indications");
-        Guard.requireAbove(weldLengthIn, 0, "weld length");
-        List<Indication> counted =
-                indications.stream().filter(Api1104::countsTowardAccumulation).toList();
-        if (counted.isEmpty()) {
-            return List.of();
-        }
-        double sum = 0;
-        for (Indication indication : counted) {
-            sum += Measure.governingSizeIn(indication);
-        }
-        double total = Num.round(sum, 4);
-        double window = Measure.worstWindowRound(counted, WINDOW_IN, weldLengthIn, Measure::governingSizeIn)
-                .totalIn();
-        double inWindow = window > 0 ? window : total;
-
-        List<ClauseVerdict> verdicts = new ArrayList<>();
-        if (inWindow > ACCUMULATION_WINDOW_IN) {
-            verdicts.add(inAFoot(ACCUMULATION_CLAUSE, "imperfections", inWindow, ACCUMULATION_WINDOW_IN));
-        }
-        if (total > Num.round(weldLengthIn * PERCENT_CAP, 4)) {
-            verdicts.add(totals(
-                    ACCUMULATION_CLAUSE,
-                    "imperfections",
-                    total,
-                    ", over " + Num.text(PERCENT_CAP * 100) + " percent of the weld"));
-        }
-        return List.copyOf(verdicts);
-    }
-
-    private static ClauseVerdict inAFoot(String clause, String what, double totalIn, double capIn) {
-        return totals(clause, what, totalIn, " in " + Num.text(WINDOW_IN) + " in, cap is " + Num.text(capIn) + " in");
-    }
-
-    private static ClauseVerdict totals(String clause, String what, double totalIn, String against) {
-        return Verdict.makeVerdict(
-                Disposition.REPAIR,
-                CODE,
-                clause,
-                what + " totals " + Num.text(Num.round(totalIn, 3)) + " in" + against,
-                totalIn);
+    /** The share of a weld under twelve inches that the code's eight percent caps allow. */
+    public static double shortWeldPercent() {
+        return PERCENT_CAP;
     }
 
     /** Judge a whole joint against the code with no crack repairs authorised. */
@@ -462,11 +283,11 @@ public final class Api1104 {
             verdicts.add(judgeOne(indication, wallIn, weldLengthIn, crackRepairs));
         }
         for (Api1104Rule rule : lengthRules()) {
-            verdicts.addAll(judgeAggregate(indications, rule, weldLengthIn));
+            verdicts.addAll(Api1104Weld.judgeAggregate(indications, rule, weldLengthIn));
         }
-        verdicts.addAll(judgeIsolatedSlag(indications, weldLengthIn));
-        verdicts.addAll(judgeHollowBeadSpacing(indications, weldLengthIn));
-        verdicts.addAll(judgeAccumulation(indications, weldLengthIn));
+        verdicts.addAll(Api1104Weld.judgeIsolatedSlag(indications, weldLengthIn));
+        verdicts.addAll(Api1104Weld.judgeHollowBeadSpacing(indications, weldLengthIn));
+        verdicts.addAll(Api1104Weld.judgeAccumulation(indications, weldLengthIn));
         return Common.settle(verdicts, CODE, "9.3");
     }
 }
