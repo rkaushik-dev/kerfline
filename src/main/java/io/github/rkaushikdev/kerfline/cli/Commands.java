@@ -11,6 +11,7 @@ import io.github.rkaushikdev.kerfline.accept.JudgeOptions;
 import io.github.rkaushikdev.kerfline.errors.BadInputException;
 import io.github.rkaushikdev.kerfline.errors.Details;
 import io.github.rkaushikdev.kerfline.errors.NotFoundException;
+import io.github.rkaushikdev.kerfline.geom.Iso17636;
 import io.github.rkaushikdev.kerfline.indication.Indication;
 import io.github.rkaushikdev.kerfline.indication.IndicationInput;
 import io.github.rkaushikdev.kerfline.indication.Measure;
@@ -76,7 +77,8 @@ public final class Commands {
             option(OptionSpec.named("film").fallback("D7")),
             option(OptionSpec.named("screens").fallback("LEAD_STANDARD")),
             option(OptionSpec.named("density").kind(OptionKind.NUMBER).fallback(2.0)),
-            option(OptionSpec.named("material").fallback("CARBON_STEEL").describe("what the pipe is")));
+            option(OptionSpec.named("material").fallback("CARBON_STEEL").describe("what the pipe is")),
+            option(OptionSpec.named("class").describe("ISO 17636 testing class, A or B")));
 
     private static final List<OptionDef> JUDGE_OPTIONS = List.of(
             option(OptionSpec.named("joint").fallback("joint")),
@@ -252,6 +254,7 @@ public final class Commands {
                 .screens(options.text("screens").orElse(null))
                 .targetDensity(options.number("density").orElse(Double.NaN))
                 .materialId(options.text("material").orElse(null))
+                .isoClass(options.text("class").map(Iso17636::testClass).orElse(null))
                 .build());
         return new CommandResult(Technique.renderTechnique(sheet), sheet.usable() ? 0 : 1);
     }

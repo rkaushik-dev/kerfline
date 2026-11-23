@@ -1,12 +1,13 @@
 package io.github.rkaushikdev.kerfline.report;
 
+import io.github.rkaushikdev.kerfline.geom.IsoClass;
 import io.github.rkaushikdev.kerfline.joint.Joint;
 
 /**
  * What a technique sheet is worked out from: the job and joint, the source and its assay, the
  * distances the crew means to set up at, the film, screens and density the job calls for, the
- * thickness ratio the coverage is planned to, whether the source can go inside the pipe, and what
- * the pipe is made of.
+ * thickness ratio the coverage is planned to, whether the source can go inside the pipe, what the
+ * pipe is made of, and the ISO 17636 testing class the client holds the work to, if any.
  *
  * <p>Built with {@link #builder()}, which starts from the shop defaults: a source shot on its assay
  * day, the film flat against the pipe, a 0.12 in focal spot, D7 film under standard lead screens
@@ -28,7 +29,8 @@ public record TechniqueInput(
         double targetDensity,
         double maxThicknessRatio,
         boolean sourceCanEnter,
-        String materialId) {
+        String materialId,
+        IsoClass isoClass) {
 
     public static Builder builder() {
         return new Builder();
@@ -49,7 +51,8 @@ public record TechniqueInput(
                 .targetDensity(targetDensity)
                 .maxThicknessRatio(maxThicknessRatio)
                 .sourceCanEnter(sourceCanEnter)
-                .materialId(materialId);
+                .materialId(materialId)
+                .isoClass(isoClass);
     }
 
     /** Builds a {@link TechniqueInput} from the shop defaults. */
@@ -68,6 +71,7 @@ public record TechniqueInput(
         private double maxThicknessRatio = 1.2;
         private boolean sourceCanEnter = false;
         private String materialId = "CARBON_STEEL";
+        private IsoClass isoClass;
 
         private Builder() {}
 
@@ -141,6 +145,12 @@ public record TechniqueInput(
             return this;
         }
 
+        /** The ISO testing class to hold the setup to, or null for none. */
+        public Builder isoClass(IsoClass value) {
+            isoClass = value;
+            return this;
+        }
+
         public TechniqueInput build() {
             return new TechniqueInput(
                     job,
@@ -156,7 +166,8 @@ public record TechniqueInput(
                     targetDensity,
                     maxThicknessRatio,
                     sourceCanEnter,
-                    materialId);
+                    materialId,
+                    isoClass);
         }
     }
 }

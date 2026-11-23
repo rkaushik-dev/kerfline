@@ -4,6 +4,8 @@ import static io.github.rkaushikdev.kerfline.testing.Close.digits;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.rkaushikdev.kerfline.geom.IsoClass;
+import io.github.rkaushikdev.kerfline.geom.IsoDistanceCheck;
 import io.github.rkaushikdev.kerfline.geom.ViewingTechnique;
 import io.github.rkaushikdev.kerfline.joint.Joint;
 import io.github.rkaushikdev.kerfline.joint.JointInput;
@@ -314,6 +316,49 @@ class TechniqueTest {
             String text = Technique.renderTechnique(sheet(base().materialId("LEAD")));
             assertThat(text).contains("LEAD (not on the material list)");
             assertThat(text).contains("material: no material LEAD on the list");
+        }
+    }
+
+    @Nested
+    class HeldToAnIsoClass {
+
+        @Test
+        void leavesTheIsoLineOffWhenNoClassWasAsked() {
+            TechniqueSheet plain = sheet(base());
+            assertThat(plain.isoDistance()).isEmpty();
+            assertThat(Technique.renderTechnique(plain)).doesNotContain("ISO 17636");
+        }
+
+        @Test
+        void saysHowFarShortOfClassBTheSetupIs() {
+            TechniqueSheet classB = sheet(base().isoClass(IsoClass.B));
+            IsoDistanceCheck check = classB.isoDistance().orElseThrow();
+            assertThat(check.minimumIn()).isEqualTo(54.86);
+            assertThat(check.pass()).isFalse();
+            assertThat(check.shortfallIn()).isEqualTo(6.86);
+            assertThat(Technique.renderTechnique(classB)).contains("class B needs 54.86 in, short by 6.86 in");
+        }
+
+        @Test
+        void saysClassAIsMetAtTheSameDistance() {
+            TechniqueSheet classA = sheet(base().isoClass(IsoClass.A));
+            assertThat(classA.isoDistance().orElseThrow().pass()).isTrue();
+            assertThat(classA.isoDistance().orElseThrow().shortfallIn()).isZero();
+            assertThat(Technique.renderTechnique(classA)).contains("class A needs 27.43 in, met");
+            assertThat(classA.usable()).isTrue();
+        }
+
+        @Test
+        void recordsAProblemWhenTheSetupCannotBeHeldToTheClass() {
+            TechniqueSheet unset = sheet(base().isoClass(IsoClass.B).sourceToObjectIn(Double.NaN));
+            assertThat(unset.isoDistance()).isEmpty();
+            assertThat(unset.problems()).anyMatch(problem -> problem.startsWith("ISO 17636: "));
+        }
+
+        @Test
+        void keepsTheClassWhenTheInputIsRebuilt() {
+            TechniqueInput input = base().isoClass(IsoClass.B).build();
+            assertThat(input.toBuilder().build().isoClass()).isEqualTo(IsoClass.B);
         }
     }
 }

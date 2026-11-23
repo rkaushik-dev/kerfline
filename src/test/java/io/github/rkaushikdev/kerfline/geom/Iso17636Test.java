@@ -85,4 +85,33 @@ class Iso17636Test {
                     .hasMessageContaining("source to object");
         }
     }
+
+    @Nested
+    class CheckAndTestClass {
+
+        @Test
+        void carriesTheMinimumAndTheShortfall() {
+            IsoDistanceCheck check = Iso17636.check(6, 0.12, 0.28, 0.28, IsoClass.B);
+            assertThat(check.testClass()).isEqualTo(IsoClass.B);
+            assertThat(check.minimumIn()).isEqualTo(6.66);
+            assertThat(check.sourceToObjectIn()).isEqualTo(6);
+            assertThat(check.pass()).isFalse();
+            assertThat(check.shortfallIn()).isEqualTo(0.66);
+            assertThat(Iso17636.check(7, 0.12, 0.28, 0.28, IsoClass.B).shortfallIn())
+                    .isZero();
+        }
+
+        @Test
+        void readsTheClassHoweverItWasWritten() {
+            assertThat(Iso17636.testClass("B")).isEqualTo(IsoClass.B);
+            assertThat(Iso17636.testClass("class a")).isEqualTo(IsoClass.A);
+            assertThat(Iso17636.testClass(" b ")).isEqualTo(IsoClass.B);
+        }
+
+        @Test
+        void refusesAClassTheStandardDoesNotHave() {
+            assertThatThrownBy(() -> Iso17636.testClass("C")).hasMessage("an ISO testing class is A or B, not C");
+            assertThatThrownBy(() -> Iso17636.testClass(null)).hasMessageContaining("A or B");
+        }
+    }
 }

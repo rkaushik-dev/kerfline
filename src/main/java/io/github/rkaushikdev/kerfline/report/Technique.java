@@ -9,6 +9,8 @@ import io.github.rkaushikdev.kerfline.errors.KerflineException;
 import io.github.rkaushikdev.kerfline.exposure.ExposurePlan;
 import io.github.rkaushikdev.kerfline.exposure.TechniqueSetup;
 import io.github.rkaushikdev.kerfline.geom.Coverage;
+import io.github.rkaushikdev.kerfline.geom.Iso17636;
+import io.github.rkaushikdev.kerfline.geom.IsoDistanceCheck;
 import io.github.rkaushikdev.kerfline.geom.PlannedShot;
 import io.github.rkaushikdev.kerfline.geom.Unsharpness;
 import io.github.rkaushikdev.kerfline.geom.UnsharpnessCheck;
@@ -114,6 +116,18 @@ public final class Technique {
                         .materialThicknessIn(penetrated)
                         .build()));
 
+        Optional<IsoDistanceCheck> isoDistance = input.isoClass() == null
+                ? Optional.empty()
+                : attempt(
+                        problems,
+                        "ISO 17636",
+                        () -> Iso17636.check(
+                                input.sourceToObjectIn(),
+                                input.sourceSizeIn(),
+                                input.objectToFilmIn(),
+                                joint.wallIn(),
+                                input.isoClass()));
+
         Optional<List<PlannedShot>> coverage = attempt(
                 problems,
                 "coverage",
@@ -133,6 +147,7 @@ public final class Technique {
                 exposure,
                 indicator,
                 geometry,
+                isoDistance,
                 coverage,
                 toOptionalDouble(barricadeFt),
                 problems);
@@ -202,7 +217,7 @@ public final class Technique {
         String quality = Layout.block(
                 "IMAGE QUALITY",
                 sheet.indicator().isPresent() && sheet.geometry().isPresent()
-                        ? qualityLines(sheet.indicator().get(), sheet.geometry().get())
+                        ? qualityLines(sheet.indicator().get(), sheet.geometry().get(), sheet.isoDistance())
                         : missing("the indicator or the geometry did not resolve"));
 
         String shots = Layout.block(
@@ -246,8 +261,9 @@ public final class Technique {
                         Num.text(exposure.minutes()) + " min (set " + timerSetting(exposure.minutes()) + " s)")));
     }
 
-    private static String qualityLines(IqiSelection indicator, UnsharpnessCheck geometry) {
-        return Text.keyValueBlock(List.of(
+    private static String qualityLines(
+            IqiSelection indicator, UnsharpnessCheck geometry, Optional<IsoDistanceCheck> isoDistance) {
+        List<Map.Entry<String, Object>> lines = new ArrayList<>(List.of(
                 Text.pair("Indicator", indicator.holeIdentity() + " hole type, " + indicator.essentialHole()),
                 Text.pair("Wire", indicator.wireNumber() + " of set " + indicator.wireSet()),
                 Text.pair(
@@ -256,6 +272,11 @@ public final class Technique {
                 Text.pair(
                         "Geometry",
                         geometry.pass() ? "acceptable" : "short by " + Num.text(geometry.shortfallIn()) + " in")));
+        isoDistance.ifPresent(check -> lines.add(Text.pair(
+                "ISO 17636",
+                check.testClass().label() + " needs " + Num.text(check.minimumIn()) + " in, "
+                        + (check.pass() ? "met" : "short by " + Num.text(check.shortfallIn()) + " in"))));
+        return Text.keyValueBlock(lines);
     }
 
     private static List<Map<String, Object>> shotRows(List<PlannedShot> plan) {

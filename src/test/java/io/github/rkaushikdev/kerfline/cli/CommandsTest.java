@@ -132,6 +132,15 @@ class CommandsTest {
         }
 
         @Test
+        void holdsTheSetupToTheIsoClassAsked() {
+            CommandResult classB = Commands.runCommand("technique", with(argv, "--class", "B"));
+            assertThat(classB.text()).contains("ISO 17636").contains("class B needs 54.86 in, short by 6.86 in");
+            assertThat(Commands.runCommand("technique", argv).text()).doesNotContain("ISO 17636");
+            assertThatThrownBy(() -> Commands.runCommand("technique", with(argv, "--class", "C")))
+                    .hasMessageContaining("A or B");
+        }
+
+        @Test
         void exitsNonZeroWhenTheTechniqueWillNotResolve() {
             List<String> thick =
                     List.of("--joint", "J-9", "--od", "24", "--wall", "3", "--activity", "40", "--distance", "48");

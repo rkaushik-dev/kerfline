@@ -3,6 +3,7 @@ package io.github.rkaushikdev.kerfline.geom;
 import io.github.rkaushikdev.kerfline.errors.BadInputException;
 import io.github.rkaushikdev.kerfline.util.Guard;
 import io.github.rkaushikdev.kerfline.util.Num;
+import java.util.Locale;
 
 /**
  * The ISO 17636-1 rule on how close the source may come.
@@ -60,7 +61,36 @@ public final class Iso17636 {
             double objectToFilmIn,
             double thicknessIn,
             IsoClass testClass) {
+        return check(sourceToObjectIn, sourceSizeIn, objectToFilmIn, thicknessIn, testClass)
+                .pass();
+    }
+
+    /** A planned setup against the class, with the minimum it was held to. */
+    public static IsoDistanceCheck check(
+            double sourceToObjectIn,
+            double sourceSizeIn,
+            double objectToFilmIn,
+            double thicknessIn,
+            IsoClass testClass) {
         Guard.requireAbove(sourceToObjectIn, 0, "source to object distance");
-        return sourceToObjectIn >= minimumSourceToObjectIn(sourceSizeIn, objectToFilmIn, thicknessIn, testClass);
+        double minimum = minimumSourceToObjectIn(sourceSizeIn, objectToFilmIn, thicknessIn, testClass);
+        return new IsoDistanceCheck(testClass, minimum, sourceToObjectIn, sourceToObjectIn >= minimum);
+    }
+
+    /**
+     * An ISO testing class as somebody wrote it, {@code B} or {@code class b}.
+     *
+     * @throws BadInputException when it is neither A nor B
+     */
+    public static IsoClass testClass(String text) {
+        String key = text == null
+                ? ""
+                : text.trim().toUpperCase(Locale.ROOT).replace("CLASS", "").trim();
+        for (IsoClass testClass : IsoClass.values()) {
+            if (testClass.name().equals(key)) {
+                return testClass;
+            }
+        }
+        throw new BadInputException("an ISO testing class is A or B, not " + text);
     }
 }
