@@ -44,6 +44,8 @@ public final class Api1104 {
     private static final double ISOLATED_WIDTH_IN = 0.125;
     private static final double ISOLATED_WINDOW_IN = 0.5;
     private static final int ISOLATED_COUNT = 4;
+    private static final String ACCUMULATION_CLAUSE = "9.3.10";
+    private static final double ACCUMULATION_WINDOW_IN = 2;
     private static final double PORE_IN = 0.125;
     private static final double PORE_WALL_FRACTION = 0.25;
     private static final double CLUSTER_IN = 0.5;
@@ -179,13 +181,7 @@ public final class Api1104 {
 
         List<ClauseVerdict> verdicts = new ArrayList<>();
         if (length > ISOLATED_WINDOW_IN) {
-            verdicts.add(Verdict.makeVerdict(
-                    Disposition.REPAIR,
-                    CODE,
-                    clause,
-                    "isolated slag totals " + Num.text(Num.round(length, 3)) + " in in " + Num.text(WINDOW_IN)
-                            + " in, cap is " + Num.text(ISOLATED_WINDOW_IN) + " in",
-                    length));
+            verdicts.add(inAFoot(clause, "isolated slag", length, ISOLATED_WINDOW_IN));
         }
         if (count > ISOLATED_COUNT) {
             verdicts.add(Verdict.makeVerdict(
@@ -284,43 +280,89 @@ public final class Api1104 {
         double inWindow = window.totalIn() > 0 ? window.totalIn() : total;
 
         if (inWindow > rule.windowIn()) {
-            verdicts.add(Verdict.makeVerdict(
-                    Disposition.REPAIR,
-                    CODE,
-                    rule.clause(),
-                    rule.label() + " totals " + Num.text(Num.round(inWindow, 3)) + " in in " + Num.text(WINDOW_IN)
-                            + " in, cap is " + Num.text(rule.windowIn()) + " in",
-                    inWindow));
+            verdicts.add(inAFoot(rule.clause(), rule.label(), inWindow, rule.windowIn()));
         }
-
         if (rule.percent().isPresent() && weldLengthIn < WINDOW_IN) {
             double percent = rule.percent().getAsDouble();
-            double cap = Num.round(weldLengthIn * percent, 4);
-            if (total > cap) {
-                verdicts.add(Verdict.makeVerdict(
-                        Disposition.REPAIR,
-                        CODE,
+            if (total > Num.round(weldLengthIn * percent, 4)) {
+                verdicts.add(totals(
                         rule.clause(),
-                        rule.label() + " totals " + Num.text(Num.round(total, 3)) + " in, over "
-                                + Num.text(percent * 100) + " percent of a weld under " + Num.text(WINDOW_IN) + " in",
-                        total));
+                        rule.label(),
+                        total,
+                        ", over " + Num.text(percent * 100) + " percent of a weld under " + Num.text(WINDOW_IN)
+                                + " in"));
             }
         }
-
         if (rule.wholeWeldFraction().isPresent()) {
             double cap = Num.round(weldLengthIn * rule.wholeWeldFraction().getAsDouble(), 4);
             if (total > cap) {
-                verdicts.add(Verdict.makeVerdict(
-                        Disposition.REPAIR,
-                        CODE,
+                verdicts.add(totals(
                         rule.clause(),
-                        rule.label() + " totals " + Num.text(Num.round(total, 3)) + " in, over " + Num.text(cap)
-                                + " in allowed in a " + Num.text(Num.round(weldLengthIn, 3)) + " in weld",
-                        total));
+                        rule.label(),
+                        total,
+                        ", over " + Num.text(cap) + " in allowed in a " + Num.text(Num.round(weldLengthIn, 3))
+                                + " in weld"));
             }
         }
 
         return List.copyOf(verdicts);
+    }
+
+    /**
+     * True for what the accumulation rule adds up: every imperfection except high-low penetration and
+     * undercut, which the code leaves to their own caps because neither is a void in the weld metal.
+     */
+    public static boolean countsTowardAccumulation(Indication indication) {
+        return !isHighLow(indication) && indication.type() != IndicationType.UNDERCUT;
+    }
+
+    /**
+     * The accumulation rule. Each kind of imperfection can sit inside its own caps and the joint can
+     * still be full of them, so the code adds every kind together: no more than two inches in any
+     * foot of weld, and no more than eight percent of the weld, whatever its length.
+     */
+    public static List<ClauseVerdict> judgeAccumulation(List<Indication> indications, double weldLengthIn) {
+        Guard.requireArray(indications, "indications");
+        Guard.requireAbove(weldLengthIn, 0, "weld length");
+        List<Indication> counted =
+                indications.stream().filter(Api1104::countsTowardAccumulation).toList();
+        if (counted.isEmpty()) {
+            return List.of();
+        }
+        double sum = 0;
+        for (Indication indication : counted) {
+            sum += Measure.governingSizeIn(indication);
+        }
+        double total = Num.round(sum, 4);
+        double window = Measure.worstWindowRound(counted, WINDOW_IN, weldLengthIn, Measure::governingSizeIn)
+                .totalIn();
+        double inWindow = window > 0 ? window : total;
+
+        List<ClauseVerdict> verdicts = new ArrayList<>();
+        if (inWindow > ACCUMULATION_WINDOW_IN) {
+            verdicts.add(inAFoot(ACCUMULATION_CLAUSE, "imperfections", inWindow, ACCUMULATION_WINDOW_IN));
+        }
+        if (total > Num.round(weldLengthIn * PERCENT_CAP, 4)) {
+            verdicts.add(totals(
+                    ACCUMULATION_CLAUSE,
+                    "imperfections",
+                    total,
+                    ", over " + Num.text(PERCENT_CAP * 100) + " percent of the weld"));
+        }
+        return List.copyOf(verdicts);
+    }
+
+    private static ClauseVerdict inAFoot(String clause, String what, double totalIn, double capIn) {
+        return totals(clause, what, totalIn, " in " + Num.text(WINDOW_IN) + " in, cap is " + Num.text(capIn) + " in");
+    }
+
+    private static ClauseVerdict totals(String clause, String what, double totalIn, String against) {
+        return Verdict.makeVerdict(
+                Disposition.REPAIR,
+                CODE,
+                clause,
+                what + " totals " + Num.text(Num.round(totalIn, 3)) + " in" + against,
+                totalIn);
     }
 
     /** Judge a whole joint against the code: each indication, then the aggregates rule by rule. */
@@ -337,6 +379,7 @@ public final class Api1104 {
             verdicts.addAll(judgeAggregate(indications, rule, weldLengthIn));
         }
         verdicts.addAll(judgeIsolatedSlag(indications, weldLengthIn));
+        verdicts.addAll(judgeAccumulation(indications, weldLengthIn));
         return Common.settle(verdicts, CODE, "9.3");
     }
 }

@@ -456,6 +456,55 @@ class Api1104Test {
     }
 
     @Nested
+    class Accumulation {
+
+        @Test
+        void addsUpEveryKindButHighLowAndUndercut() {
+            assertThat(Api1104.countsTowardAccumulation(ind("SLAG", 0.5))).isTrue();
+            assertThat(Api1104.countsTowardAccumulation(ind("POROSITY", 0.05))).isTrue();
+            assertThat(Api1104.countsTowardAccumulation(ind("UNDERCUT", 0.5))).isFalse();
+            assertThat(Api1104.countsTowardAccumulation(ind("IP", 0.5, input -> input.note("high-low"))))
+                    .isFalse();
+        }
+
+        @Test
+        void catchesTwoKindsThatEachPassButCrowdOneFoot() {
+            List<Indication> set = List.of(at("SLAG", 1.5, 0), at("IP", 0.9, 3));
+            JointVerdict result = Api1104.judgeJoint(set, 0.28, 37.7);
+            assertThat(result.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(result.reasons()).containsExactly("imperfections totals 2.4 in in 12 in, cap is 2 in");
+            assertThat(result.clause()).hasValue("9.3.10");
+        }
+
+        @Test
+        void catchesEightPercentOfTheWeldSpreadRoundIt() {
+            List<Indication> set = List.of(at("SLAG", 0.9, 0), at("IP", 0.9, 10.4));
+            List<ClauseVerdict> verdicts = Api1104.judgeAccumulation(set, 20.8);
+            assertThat(verdicts).singleElement().satisfies(verdict -> {
+                assertThat(verdict.reason()).hasValue("imperfections totals 1.8 in, over 8 percent of the weld");
+                assertThat(verdict.measured()).hasValue(1.8);
+            });
+            assertThat(Api1104.judgeAccumulation(set, 37.7)).isEmpty();
+        }
+
+        @Test
+        void leavesUndercutAndHighLowToTheirOwnCaps() {
+            List<Indication> set = List.of(at("UNDERCUT", 1.5, 0), ind("IP", 1.5, input -> input.note("high-low")
+                    .at(2)));
+            assertThat(Api1104.judgeAccumulation(set, 37.7)).isEmpty();
+        }
+
+        @Test
+        void readsUnplacedImperfectionsAsOneRun() {
+            List<Indication> set = List.of(ind("SLAG", 1.5), ind("IP", 0.9));
+            assertThat(Api1104.judgeAccumulation(set, 37.7))
+                    .singleElement()
+                    .satisfies(verdict -> assertThat(verdict.measured()).hasValue(2.4));
+            assertThat(Api1104.judgeAccumulation(List.of(), 37.7)).isEmpty();
+        }
+    }
+
+    @Nested
     class JudgeJoint {
 
         private static final double WALL = 0.28;
