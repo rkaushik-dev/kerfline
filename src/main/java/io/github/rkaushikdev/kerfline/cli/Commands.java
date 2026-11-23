@@ -25,6 +25,8 @@ import io.github.rkaushikdev.kerfline.report.TechniqueInput;
 import io.github.rkaushikdev.kerfline.report.TechniqueSheet;
 import io.github.rkaushikdev.kerfline.safety.Boundary;
 import io.github.rkaushikdev.kerfline.safety.Camera;
+import io.github.rkaushikdev.kerfline.safety.Shipping;
+import io.github.rkaushikdev.kerfline.safety.ShippingLabel;
 import io.github.rkaushikdev.kerfline.util.Column;
 import io.github.rkaushikdev.kerfline.util.Num;
 import io.github.rkaushikdev.kerfline.util.Text;
@@ -112,6 +114,16 @@ public final class Commands {
                     .fallback(90.0)
                     .describe("days to project")));
 
+    private static final List<OptionDef> SHIP_OPTIONS = List.of(
+            option(OptionSpec.named("surface")
+                    .kind(OptionKind.NUMBER)
+                    .required(true)
+                    .describe("highest mrem/h at the package surface")),
+            option(OptionSpec.named("metre")
+                    .kind(OptionKind.NUMBER)
+                    .required(true)
+                    .describe("highest mrem/h one metre from the package")));
+
     private static final String INDICATION_SHAPE = "type:size:position:note";
 
     private static final Map<String, CliCommand> COMMANDS = commands();
@@ -124,24 +136,23 @@ public final class Commands {
 
     private static Map<String, CliCommand> commands() {
         Map<String, CliCommand> commands = new LinkedHashMap<>();
-        commands.put(
-                "technique",
+        for (CliCommand command : List.of(
                 new CliCommand(
                         "technique",
                         "work out a technique sheet for one joint",
                         TECHNIQUE_OPTIONS,
-                        Commands::technique));
-        commands.put(
-                "judge",
-                new CliCommand("judge", "judge a set of indications against a code", JUDGE_OPTIONS, Commands::judge));
-        commands.put(
-                "sources",
+                        Commands::technique),
+                new CliCommand("judge", "judge a set of indications against a code", JUDGE_OPTIONS, Commands::judge),
                 new CliCommand(
                         "sources",
                         "show the source catalog, decay and boundary distances",
                         SOURCE_OPTIONS,
-                        Commands::sources));
-        commands.put("tables", Tables.tablesCommand());
+                        Commands::sources),
+                new CliCommand(
+                        "ship", "label a camera for the road from its survey readings", SHIP_OPTIONS, Commands::ship),
+                Tables.tablesCommand())) {
+            commands.put(command.name(), command);
+        }
         return Collections.unmodifiableMap(commands);
     }
 
@@ -287,6 +298,20 @@ public final class Commands {
             result.reasons().forEach(reason -> lines.add("  - " + reason));
         }
         return new CommandResult(String.join("\n", lines), result.disposition() == Disposition.ACCEPT ? 0 : 1);
+    }
+
+    /** The label and transport index for a package; exits 1 when it cannot ship at all. */
+    private static CommandResult ship(ParsedArgs options) {
+        ShippingLabel label = Shipping.labelFor(
+                options.number("surface").orElse(Double.NaN),
+                options.number("metre").orElse(Double.NaN));
+        List<String> lines = new ArrayList<>();
+        lines.add(Text.keyValueBlock(List.of(
+                pair("Label", label.label().label()),
+                pair("Transport index", Num.fixed(label.transportIndex(), 1)),
+                pair("Decided by", label.decidedBy()))));
+        label.refusal().ifPresent(reason -> lines.add("Do not ship: " + reason));
+        return new CommandResult(String.join("\n", lines), label.shippable() ? 0 : 1);
     }
 
     /** The first reason a code gave, or its refusal when it could not run, or nothing. */

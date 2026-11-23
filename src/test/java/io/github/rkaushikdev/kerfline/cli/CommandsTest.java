@@ -88,7 +88,7 @@ class CommandsTest {
 
         @Test
         void offersTheFourCommands() {
-            assertThat(Commands.commandNames()).containsExactly("technique", "judge", "sources", "tables");
+            assertThat(Commands.commandNames()).containsExactly("technique", "judge", "sources", "ship", "tables");
         }
 
         @Test
@@ -277,6 +277,33 @@ class CommandsTest {
                     Args.parseArgs(List.of(), Commands.command("judge").options()));
             assertThat(bare.weldLengthIn()).isNull();
             assertThat(bare.crackRepairs()).isFalse();
+        }
+    }
+
+    @Nested
+    class ShipCommand {
+
+        @Test
+        void labelsACameraFromItsTwoReadings() {
+            CommandResult result = Commands.runCommand("ship", List.of("--surface", "60", "--metre", "0.4"));
+            assertThat(result.code()).isZero();
+            assertThat(result.text())
+                    .contains("Radioactive Yellow-III")
+                    .contains("0.4")
+                    .contains("surface");
+        }
+
+        @Test
+        void exitsOneForAPackageThatCannotGo() {
+            CommandResult result = Commands.runCommand("ship", List.of("--surface", "1200", "--metre", "5"));
+            assertThat(result.code()).isEqualTo(1);
+            assertThat(result.text()).contains("Do not ship");
+        }
+
+        @Test
+        void wantsBothReadings() {
+            assertThatThrownBy(() -> Commands.runCommand("ship", List.of("--surface", "60")))
+                    .hasMessageContaining("missing required option: --metre");
         }
     }
 
