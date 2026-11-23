@@ -38,6 +38,9 @@ public final class Api1104 {
 
     private static final double SLAG_WIDTH_IN = 0.0625;
     private static final String ISOLATED = "isolated";
+    private static final String HIGH_LOW_NOTE = "high-low";
+    private static final Api1104Rule HIGH_LOW = new Api1104Rule(
+            "9.3.2", 2, 3, OptionalDouble.empty(), OptionalDouble.empty(), "incomplete penetration due to high-low");
     private static final double ISOLATED_WIDTH_IN = 0.125;
     private static final double ISOLATED_WINDOW_IN = 0.5;
     private static final int ISOLATED_COUNT = 4;
@@ -102,33 +105,20 @@ public final class Api1104 {
     /** A single pore is capped both absolutely and against the wall it is in. */
     public static ClauseVerdict judgePorosity(Indication indication, double wallIn) {
         Guard.requireAbove(wallIn, 0, "wall thickness");
-        double size = Measure.governingSizeIn(indication);
-        double wallCap = Num.round(wallIn * PORE_WALL_FRACTION, 4);
-        double cap = Math.min(PORE_IN, wallCap);
-        if (size <= cap) {
-            return Verdict.accept(CODE, "9.3.3");
-        }
-        return Verdict.makeVerdict(
-                Disposition.REPAIR,
-                CODE,
-                "9.3.3",
-                "pore " + Num.text(Num.round(size, 3)) + " in across, cap is " + Num.text(cap) + " in",
-                indication,
-                size);
+        double cap = Math.min(PORE_IN, Num.round(wallIn * PORE_WALL_FRACTION, 4));
+        return Common.capVerdict(across(indication, "pore", cap));
     }
 
     public static ClauseVerdict judgeCluster(Indication indication) {
-        double size = Measure.governingSizeIn(indication);
-        if (size <= CLUSTER_IN) {
-            return Verdict.accept(CODE, "9.3.3");
-        }
-        return Verdict.makeVerdict(
-                Disposition.REPAIR,
-                CODE,
-                "9.3.3",
-                "cluster " + Num.text(Num.round(size, 3)) + " in across, cap is " + Num.text(CLUSTER_IN) + " in",
-                indication,
-                size);
+        return Common.capVerdict(across(indication, "cluster", CLUSTER_IN));
+    }
+
+    private static CapCheck across(Indication indication, String what, double capIn) {
+        return CapCheck.of(CODE, "9.3.3", what)
+                .size(Measure.governingSizeIn(indication))
+                .cap(capIn)
+                .units("in across")
+                .indication(indication);
     }
 
     /** True for slag the reader marked {@code isolated}; any other slag is an elongated line. */
@@ -209,24 +199,49 @@ public final class Api1104 {
         return List.copyOf(verdicts);
     }
 
-    /** Everything covered by a plain single length cap; a type with no rule is accepted. */
+    /**
+     * True for incomplete penetration the reader put down to high-low: the root was there, but one
+     * pipe end sat proud of the other and the weld could not reach both lands.
+     */
+    public static boolean isHighLow(Indication indication) {
+        return indication.type() == IndicationType.IP
+                && indication.note().filter(HIGH_LOW_NOTE::equals).isPresent();
+    }
+
+    /**
+     * The length rule an indication is judged under, read from its type and from what the reader
+     * noted: incomplete penetration put down to high-low has caps of its own, and isolated slag is
+     * held by {@link #judgeIsolatedSlag} rather than by a length rule.
+     */
+    public static Optional<Api1104Rule> ruleOf(Indication indication) {
+        if (isHighLow(indication)) {
+            return Optional.of(HIGH_LOW);
+        }
+        if (isIsolatedSlag(indication)) {
+            return Optional.empty();
+        }
+        return ruleFor(indication.type());
+    }
+
+    /** Every length rule the aggregate caps are read under, in the order findings are reported. */
+    public static List<Api1104Rule> lengthRules() {
+        List<Api1104Rule> all = new ArrayList<>(RULES.values());
+        all.add(1, HIGH_LOW);
+        return List.copyOf(all);
+    }
+
+    /** Everything covered by a plain single length cap; an indication with no rule is accepted. */
     public static ClauseVerdict judgeByLength(Indication indication) {
-        Api1104Rule rule = RULES.get(indication.type());
-        if (rule == null) {
+        Optional<Api1104Rule> rule = ruleOf(indication);
+        if (rule.isEmpty()) {
             return Verdict.accept(CODE, "9.3");
         }
-        double size = Measure.governingSizeIn(indication);
-        if (size <= rule.singleIn()) {
-            return Verdict.accept(CODE, rule.clause());
-        }
-        return Verdict.makeVerdict(
-                Disposition.REPAIR,
-                CODE,
-                rule.clause(),
-                rule.label() + " " + Num.text(Num.round(size, 3)) + " in long, cap is " + Num.text(rule.singleIn())
-                        + " in",
-                indication,
-                size);
+        return Common.capVerdict(
+                CapCheck.of(CODE, rule.get().clause(), rule.get().label())
+                        .size(Measure.governingSizeIn(indication))
+                        .cap(rule.get().singleIn())
+                        .units("in long")
+                        .indication(indication));
     }
 
     /** One indication, sent to the rule its type is judged under. */
@@ -248,12 +263,18 @@ public final class Api1104 {
     public static List<ClauseVerdict> judgeAggregate(
             List<Indication> indications, IndicationType type, double weldLengthIn) {
         Api1104Rule rule = RULES.get(type);
+        return rule == null ? List.of() : judgeAggregate(indications, rule, weldLengthIn);
+    }
+
+    /** The aggregate caps of one length rule, over the indications judged under it and no others. */
+    public static List<ClauseVerdict> judgeAggregate(
+            List<Indication> indications, Api1104Rule rule, double weldLengthIn) {
         Guard.requireAbove(weldLengthIn, 0, "weld length");
         Guard.requireArray(indications, "indications");
         List<Indication> ofType = indications.stream()
-                .filter(indication -> indication.type() == type && !isIsolatedSlag(indication))
+                .filter(indication -> ruleOf(indication).filter(rule::equals).isPresent())
                 .toList();
-        if (rule == null || ofType.isEmpty()) {
+        if (ofType.isEmpty()) {
             return List.of();
         }
 
@@ -302,7 +323,7 @@ public final class Api1104 {
         return List.copyOf(verdicts);
     }
 
-    /** Judge a whole joint against the code: each indication, then the aggregates by type. */
+    /** Judge a whole joint against the code: each indication, then the aggregates rule by rule. */
     public static JointVerdict judgeJoint(List<Indication> indications, double wallIn, double weldLengthIn) {
         Guard.requireArray(indications, "indications");
         Guard.requireAbove(wallIn, 0, "wall thickness");
@@ -312,8 +333,8 @@ public final class Api1104 {
         for (Indication indication : indications) {
             verdicts.add(judgeOne(indication, wallIn));
         }
-        for (IndicationType type : RULES.keySet()) {
-            verdicts.addAll(judgeAggregate(indications, type, weldLengthIn));
+        for (Api1104Rule rule : lengthRules()) {
+            verdicts.addAll(judgeAggregate(indications, rule, weldLengthIn));
         }
         verdicts.addAll(judgeIsolatedSlag(indications, weldLengthIn));
         return Common.settle(verdicts, CODE, "9.3");

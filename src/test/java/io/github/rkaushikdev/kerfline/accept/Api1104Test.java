@@ -264,6 +264,76 @@ class Api1104Test {
     }
 
     @Nested
+    class HighLow {
+
+        private Indication highLow(double lengthIn, double at) {
+            return ind("IP", lengthIn, input -> input.note("high-low").at(at));
+        }
+
+        @Test
+        void tellsHighLowFromAnUnfilledRoot() {
+            assertThat(Api1104.isHighLow(highLow(0.5, 0))).isTrue();
+            assertThat(Api1104.isHighLow(ind("IP", 0.5))).isFalse();
+            assertThat(Api1104.isHighLow(ind("IF", 0.5, input -> input.note("high-low"))))
+                    .isFalse();
+        }
+
+        @Test
+        void allowsTwoInchesOfHighLowWhereAPlainRootGetsOne() {
+            assertThat(Api1104.judgeByLength(ind("IP", 1.5)).disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(Api1104.judgeByLength(highLow(1.5, 0)).disposition()).isEqualTo(Disposition.ACCEPT);
+            ClauseVerdict over = Api1104.judgeByLength(highLow(2.5, 0));
+            assertThat(over.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(over.reason()).hasValue("incomplete penetration due to high-low 2.5 in long, cap is 2 in long");
+        }
+
+        @Test
+        void capsHighLowAtThreeInchesInAFoot() {
+            List<Indication> inside = List.of(highLow(1.5, 0), highLow(1.2, 5));
+            assertThat(Api1104.judgeJoint(inside, 0.28, 37.7).disposition()).isEqualTo(Disposition.ACCEPT);
+            List<Indication> over = List.of(highLow(1.5, 0), highLow(1.2, 5), highLow(0.5, 8));
+            JointVerdict result = Api1104.judgeJoint(over, 0.28, 37.7);
+            assertThat(result.disposition()).isEqualTo(Disposition.REPAIR);
+            assertThat(result.reasons())
+                    .containsExactly("incomplete penetration due to high-low totals 3.2 in in 12 in, cap is 3 in");
+        }
+
+        @Test
+        void keepsHighLowOutOfThePlainPenetrationTotal() {
+            List<Indication> set = List.of(at("IP", 0.6, 0), highLow(0.6, 1));
+            assertThat(Api1104.judgeAggregate(set, IndicationType.IP, 37.7)).isEmpty();
+            assertThat(Api1104.judgeAggregate(List.of(at("IP", 0.6, 0), at("IP", 0.6, 1)), IndicationType.IP, 37.7))
+                    .hasSize(1);
+        }
+
+        @Test
+        void readsTheRuleFromTheNoteAsWellAsTheType() {
+            assertThat(Api1104.ruleOf(highLow(1, 0)).orElseThrow().singleIn()).isEqualTo(2);
+            assertThat(Api1104.ruleOf(ind("IP", 1)).orElseThrow().singleIn()).isEqualTo(1);
+            assertThat(Api1104.ruleOf(ind("SLAG", 1, input -> input.note("isolated"))))
+                    .isEmpty();
+            assertThat(Api1104.ruleOf(ind("TUNGSTEN", 1))).isEmpty();
+        }
+
+        @Test
+        void listsTheHighLowRuleNextToThePenetrationOne() {
+            List<Api1104Rule> rules = Api1104.lengthRules();
+            assertThat(rules).hasSize(7);
+            assertThat(rules.get(0).label()).isEqualTo("incomplete penetration");
+            assertThat(rules.get(1).label()).isEqualTo("incomplete penetration due to high-low");
+            assertThat(rules.get(1).windowIn()).isEqualTo(3);
+        }
+
+        @Test
+        void saysWhatThePoreWasMeasuredAcross() {
+            assertThat(Api1104.judgePorosity(ind("POROSITY", 0.13), 1).reason())
+                    .hasValue("pore 0.13 in across, cap is 0.125 in across");
+            assertThat(Api1104.judgeCluster(ind("CLUSTER", 0.6)).reason())
+                    .hasValue("cluster 0.6 in across, cap is 0.5 in across");
+        }
+    }
+
+    @Nested
     class JudgeOne {
 
         @Test
